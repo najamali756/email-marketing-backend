@@ -1,0 +1,4 @@
+email,first_name,last_name,phone,city,country,tags,accept_email_marketing,total_orders,total_spent
+sarah.johnson@email.com,Sarah,Johnson,+15551234567,Los Angeles,US,"VIP,Repeat Buyer",true,3,473.00
+ali.khan@email.com,Ali,Khan,+923001234567,Karachi,PK,New,true,1,89.99
+inactive.user@email.com,Inactive,User,,,US,,false,0,0
