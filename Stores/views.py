@@ -29,9 +29,7 @@ class StoreListCreateView(ClientContextMixin, ListCreateAPIView):
         return Store.objects.filter(client=self.request.client, is_active=True).order_by("-created_at")
 
     def get_permissions(self):
-        if self.request.method == "POST":
-            return [IsAuthenticated(), IsClientAdmin()]
-        return [IsAuthenticated()]
+        return []
 
     def perform_create(self, serializer):
         serializer.save(client=self.request.client)

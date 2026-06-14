@@ -33,9 +33,10 @@ class EmailCampaignCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailCampaign
         fields = (
-            "name", "subject", "preview_text", "template", "segment",
+            "id", "name", "subject", "preview_text", "template", "segment",
             "campaign_type", "scheduled_at", "from_name", "html_content",
         )
+        read_only_fields = ("id",)
 
 
 class SendCampaignSerializer(serializers.Serializer):

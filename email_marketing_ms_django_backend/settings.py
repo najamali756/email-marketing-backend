@@ -2,8 +2,12 @@ import os
 from pathlib import Path
 
 from corsheaders.defaults import default_headers
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-email-marketing-dev-key")
 
@@ -71,16 +75,27 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "email_marketing_ms_django_backend.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.environ["dbName"],
-        "USER": os.environ["username"],
-        "HOST": os.environ["hostName"],
-        "PASSWORD": os.environ["password"],
-        "PORT": os.environ["port"],
+# Use SQLite for development (no MySQL server needed)
+# For production, configure MySQL in .env with DATABASE_TYPE=mysql
+if os.environ.get("DATABASE_TYPE") == "mysql":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.environ.get("dbName", "email_marketing_db"),
+            "USER": os.environ.get("username", "root"),
+            "HOST": os.environ.get("hostName", "localhost"),
+            "PASSWORD": os.environ.get("password", ""),
+            "PORT": os.environ.get("port", "3306"),
+        }
     }
-}
+else:
+    # Default to SQLite for local development
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": os.path.join(BASE_DIR, "db.sqlite3"),
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

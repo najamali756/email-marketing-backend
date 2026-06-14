@@ -13,9 +13,9 @@ def health_check(_request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("health/", health_check),
-    re_path(r"auth", include("Accounts.urls")),
-    re_path(r"stores", include("Stores.urls")),
-    re_path(r"emailMarketing", include("EmailMarketing.urls")),
+    re_path(r"^auth/", include("Accounts.urls")),
+    re_path(r"^stores/", include("Stores.urls")),
+    re_path(r"^emailMarketing/", include("EmailMarketing.urls")),
 ]
 
 try:

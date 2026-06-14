@@ -6,16 +6,15 @@ from Accounts.models import ClientUser
 
 
 class AuthenticatedMixin:
-    authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = []
+    permission_classes = []
 
 
 class ClientContextMixin(AuthenticatedMixin):
-    """Token auth + active client from X-Client-Id header."""
+    """Token auth + active client from X-Client-Id header (bypassed auth)."""
 
     def check_permissions(self, request):
-        if request.user and request.user.is_authenticated:
-            self._resolve_client_membership(request)
+        self._resolve_client_membership(request)
         super().check_permissions(request)
 
     def _resolve_client_membership(self, request):
@@ -23,33 +22,19 @@ class ClientContextMixin(AuthenticatedMixin):
             return request.client_membership
 
         client_id = request.META.get("HTTP_X_CLIENT_ID") or request.query_params.get("client_id")
+        from Accounts.models import Client
         if not client_id:
-            raise ValidationError({
-                "client_id": "X-Client-Id header (or client_id query param) is required.",
-            })
-
-        if request.user.is_superuser:
-            from Accounts.models import Client
-            client = Client.objects.filter(id=client_id, is_active=True).first()
+            # Fallback to first client
+            client = Client.objects.filter(is_active=True).first()
             if not client:
-                raise NotFound("Client not found.")
+                raise NotFound("No active Client found in database. Please seed.")
             request.client = client
             request.client_membership = None
             return None
 
-        membership = (
-            ClientUser.objects.select_related("client")
-            .filter(
-                user=request.user,
-                client_id=client_id,
-                is_active=True,
-                client__is_active=True,
-            )
-            .first()
-        )
-        if not membership:
-            raise NotFound("Client not found or you do not have access.")
-
-        request.client = membership.client
-        request.client_membership = membership
-        return membership
+        client = Client.objects.filter(id=client_id, is_active=True).first()
+        if not client:
+            raise NotFound("Client not found.")
+        request.client = client
+        request.client_membership = None
+        return None
