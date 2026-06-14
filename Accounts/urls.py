@@ -7,5 +7,5 @@ urlpatterns = [
     url(r"^login$", LoginView.as_view()),
     url(r"^logout$", LogoutView.as_view()),
     url(r"^me$", MeView.as_view()),
-    url(r"^users$", UserListCreateView.as_view()),
+    url(r"^users$", UserListCreateView.as_view()), 
 ]
