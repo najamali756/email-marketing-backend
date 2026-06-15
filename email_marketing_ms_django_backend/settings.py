@@ -25,6 +25,10 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "x-store-id",
     "x-client-id",
     "x-access-key",
+    "User-Agent",
+]
+CORS_ORIGIN_WHITELIST = [
+    'http://localhost:3000',
 ]
 
 INSTALLED_APPS = [
@@ -76,6 +80,10 @@ WSGI_APPLICATION = "email_marketing_ms_django_backend.wsgi.application"
 
 # Use SQLite for development (no MySQL server needed)
 # For production, configure MySQL in .env with DATABASE_TYPE=mysql
+
+print(os.environ.get("DATABASE_TYPE"),
+      os.environ.get("dbName", "email_marketing_db"), os.environ.get("username", "root"),
+      os.environ.get("password", ""))
 if os.environ.get("DATABASE_TYPE") == "mysql":
     DATABASES = {
         "default": {
