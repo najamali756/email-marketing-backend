@@ -6,7 +6,7 @@ from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 
-from Stores.models import Contact
+from Accounts.models import Contact
 
 REQUIRED_COLUMN = "email"
 

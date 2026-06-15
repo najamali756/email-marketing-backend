@@ -2,7 +2,7 @@ from django.core.management.base import BaseCommand
 
 from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 from EmailMarketing.models import EmailSegment
-from Stores.models import Store
+from Accounts.models import Store
 
 DEFAULT_SEGMENTS = [
     {"name": "All Subscribers", "description": "All opted-in contacts", "is_default": True, "filter_config": {}},

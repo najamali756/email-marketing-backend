@@ -6,7 +6,7 @@ from email.mime.text import MIMEText
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
-from Stores.models import Store
+from Accounts.models import Store
 
 
 class EmailProvider:
@@ -92,5 +92,5 @@ class EmailProvider:
             server.quit()
             return 200
         except Exception as e:
-            print(f"SMTP sending failed: {e}. Falling back to mock email logging.")
-            return self._send_smtp_mock(to_email, subject, html_body, from_email, from_name)
+            print(f"SMTP sending failed: {e}.")
+            raise e

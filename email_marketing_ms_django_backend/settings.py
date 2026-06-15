@@ -38,7 +38,6 @@ INSTALLED_APPS = [
     "rest_framework.authtoken",
     "corsheaders",
     "Accounts",
-    "Stores",
     "EmailMarketing",
 ]
 

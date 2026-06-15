@@ -128,6 +128,18 @@ class BulkEmailSender:
 
                 recipient.save(update_fields=["status", "sent_at", "error_message", "updated_at"])
 
+            # Real-time progress update
+            campaign.sent_count = EmailCampaignRecipient.objects.filter(
+                campaign=campaign, status=EmailRecipientStatusEnum.sent.value
+            ).count()
+            campaign.failed_count = EmailCampaignRecipient.objects.filter(
+                campaign=campaign, status=EmailRecipientStatusEnum.failed.value
+            ).count()
+            campaign.skipped_count = EmailCampaignRecipient.objects.filter(
+                campaign=campaign, status=EmailRecipientStatusEnum.skipped.value
+            ).count()
+            campaign.save(update_fields=["sent_count", "failed_count", "skipped_count", "updated_at"])
+
             if self.batch_sleep:
                 time.sleep(self.batch_sleep)
 
@@ -177,7 +189,7 @@ class BulkEmailSender:
             return f"/emailMarketing/unsubscribe?token={recipient.tracking_token}"
         return f"{self.public_url.rstrip('/')}/emailMarketing/unsubscribe?token={recipient.tracking_token}"
 
-    def send_test_email(self, to_email):
+    def send_test_email(self, to_email, personalization=None):
         campaign = self._load_campaign()
         if not campaign:
             raise ValueError("Campaign not found")
@@ -192,6 +204,7 @@ class BulkEmailSender:
             "email": to_email,
             "store_name": brand_settings.store_name if brand_settings else campaign.store.name,
             "unsubscribe_url": "#",
+            **(personalization or {})
         }
         provider.send(
             to_email=to_email,

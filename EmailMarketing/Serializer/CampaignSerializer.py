@@ -15,10 +15,10 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
             "campaign_type", "scheduled_at", "sent_at", "from_name", "html_content",
             "total_recipients", "sent_count", "failed_count", "skipped_count",
             "open_count", "click_count", "revenue", "open_rate", "click_rate",
-            "audience_name", "created_at", "updated_at",
+            "audience_name", "wizard_step", "created_at", "updated_at",
         )
         read_only_fields = (
-            "status", "sent_at", "total_recipients", "sent_count", "failed_count",
+            "sent_at", "total_recipients", "sent_count", "failed_count",
             "skipped_count", "open_count", "click_count", "revenue", "created_at", "updated_at",
         )
 
@@ -34,13 +34,14 @@ class EmailCampaignCreateSerializer(serializers.ModelSerializer):
         model = EmailCampaign
         fields = (
             "id", "name", "subject", "preview_text", "template", "segment",
-            "campaign_type", "scheduled_at", "from_name", "html_content",
+            "campaign_type", "scheduled_at", "from_name", "html_content", "wizard_step",
         )
         read_only_fields = ("id",)
 
 
 class SendCampaignSerializer(serializers.Serializer):
     test_email = serializers.EmailField(required=False, allow_null=True)
+    personalization = serializers.JSONField(required=False, default=dict)
 
 
 class CampaignRecipientSerializer(serializers.ModelSerializer):

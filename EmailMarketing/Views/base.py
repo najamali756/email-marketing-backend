@@ -1,5 +1,5 @@
-from Stores.mixins import StoreContextMixin
-from Stores.permissions import HasStoreContext
+from Accounts.mixins import StoreContextMixin
+from Accounts.permissions import HasStoreContext
 
 
 class StoreAuthenticatedMixin(StoreContextMixin):

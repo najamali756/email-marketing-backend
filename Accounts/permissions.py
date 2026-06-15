@@ -1,11 +1,16 @@
 from rest_framework.permissions import BasePermission
 
-from Accounts.models import UserRoleEnum
+
+class HasStoreContext(BasePermission):
+    def has_permission(self, request, view):
+        return getattr(request, "store", None) is not None
 
 
 class IsClientAdmin(BasePermission):
     def has_permission(self, request, view):
-        if request.user and request.user.is_superuser:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_staff or user.is_superuser:
             return True
-        membership = getattr(request, "client_membership", None)
-        return bool(membership and membership.role == UserRoleEnum.admin.value)
+        return user.user_type == "admin"

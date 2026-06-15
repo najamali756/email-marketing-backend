@@ -3,7 +3,7 @@ from enum import Enum
 
 from django.db import models
 
-from Stores.models import Contact, Store, TimeStampedModel
+from Accounts.models import Contact, Store, TimeStampedModel
 
 
 class EmailCampaignStatusEnum(Enum):
@@ -89,6 +89,7 @@ class EmailCampaign(TimeStampedModel):
     click_count = models.IntegerField(default=0)
     revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     last_error = models.TextField(blank=True, null=True)
+    wizard_step = models.IntegerField(default=1)
 
 
 class EmailCampaignRecipient(TimeStampedModel):

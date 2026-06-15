@@ -1,4 +1,4 @@
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView
 
 from EmailMarketing.models import EmailTemplate
 from EmailMarketing.Serializer.TemplateSerializer import EmailTemplateSerializer
@@ -19,7 +19,7 @@ class EmailTemplateListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
         serializer.save(store=self.request.store)
 
 
-class EmailTemplateDetailView(StoreAuthenticatedMixin, RetrieveUpdateAPIView):
+class EmailTemplateDetailView(StoreAuthenticatedMixin, RetrieveUpdateDestroyAPIView):
     serializer_class = EmailTemplateSerializer
 
     def get_queryset(self):

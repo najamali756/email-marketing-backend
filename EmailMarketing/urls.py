@@ -8,6 +8,7 @@ from EmailMarketing.Views.Campaigns import (
     EmailCampaignDetailView,
     EmailCampaignListCreateView,
     SendCampaignView,
+    UploadCampaignRecipientsView,
 )
 from EmailMarketing.Views.Templates import EmailTemplateDetailView, EmailTemplateListCreateView
 from EmailMarketing.Views.Unsubscribe import EmailUnsubscribeView
@@ -23,5 +24,6 @@ urlpatterns = [
     url(r"^campaigns/(?P<campaign_id>\d+)/buildAudience$", BuildCampaignAudienceView.as_view()),
     url(r"^campaigns/(?P<campaign_id>\d+)/send$", SendCampaignView.as_view()),
     url(r"^campaigns/(?P<campaign_id>\d+)/recipients$", CampaignRecipientsView.as_view()),
+    url(r"^campaigns/(?P<campaign_id>\d+)/upload-recipients$", UploadCampaignRecipientsView.as_view()),
     url(r"^unsubscribe$", EmailUnsubscribeView.as_view()),
 ]

@@ -4,7 +4,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from EmailMarketing.models import EmailUnsubscribe
-from Stores.models import Contact
+from Accounts.models import Contact
 
 
 class AudienceResolver:
