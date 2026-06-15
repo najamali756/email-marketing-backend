@@ -1,5 +1,5 @@
-FROM python:3.10.0
-WORKDIR /app
+FROM --platform=linux/x86-64 python:3.10.9
+WORKDIR /usr/src/app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
