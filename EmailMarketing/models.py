@@ -119,3 +119,13 @@ class EmailUnsubscribe(TimeStampedModel):
 
     class Meta:
         unique_together = ("store", "email")
+
+
+class EmailTemplateMedia(TimeStampedModel):
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name="email_media")
+    template = models.ForeignKey(EmailTemplate, on_delete=models.SET_NULL, null=True, blank=True, related_name="media")
+    file_url = models.TextField()
+    client_uuid = models.CharField(max_length=100, blank=True, null=True)
+    file_type = models.CharField(max_length=50, default="image")
+    is_active = models.BooleanField(default=True)
+

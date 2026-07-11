@@ -11,12 +11,15 @@ from EmailMarketing.Views.Campaigns import (
     UploadCampaignRecipientsView,
 )
 from EmailMarketing.Views.Templates import EmailTemplateDetailView, EmailTemplateListCreateView
+from EmailMarketing.Views.Media import EmailTemplateMediaListView, EmailTemplateMediaDetailView
 from EmailMarketing.Views.Unsubscribe import EmailUnsubscribeView
 
 urlpatterns = [
     url(r"^brandSettings$", EmailBrandSettingsView.as_view()),
     url(r"^templates$", EmailTemplateListCreateView.as_view()),
     url(r"^templates/(?P<pk>\d+)$", EmailTemplateDetailView.as_view()),
+    url(r"^templates/media$", EmailTemplateMediaListView.as_view()),
+    url(r"^templates/media/(?P<pk>\d+)$", EmailTemplateMediaDetailView.as_view()),
     url(r"^segments$", EmailSegmentListCreateView.as_view()),
     url(r"^audiences/estimate$", AudienceEstimateView.as_view()),
     url(r"^campaigns$", EmailCampaignListCreateView.as_view()),
