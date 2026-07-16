@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from EmailMarketing.models import EmailBrandSettings, EmailTemplate
+from EmailMarketing.models import EmailBrandSettings, EmailTemplate, StoreSenderIdentity
 
 
 class EmailTemplateSerializer(serializers.ModelSerializer):
@@ -20,3 +20,14 @@ class EmailBrandSettingsSerializer(serializers.ModelSerializer):
             "sender_email", "notify_campaign_sent", "notify_weekly_reports",
             "notify_new_subscriber", "created_at", "updated_at",
         )
+
+
+class StoreSenderIdentitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StoreSenderIdentity
+        fields = (
+            "id", "mode", "brand_name", "from_email", "reply_to_email",
+            "domain", "sendgrid_domain_id", "dns_records", "status",
+            "is_active", "created_at", "updated_at",
+        )
+        read_only_fields = ("id", "sendgrid_domain_id", "dns_records", "status", "created_at", "updated_at")

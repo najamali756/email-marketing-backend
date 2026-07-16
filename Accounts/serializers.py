@@ -21,22 +21,12 @@ class StoreSerializer(serializers.ModelSerializer):
             "shop_url",
             "is_active",
             "email_provider",
-            "sendgrid_api_key",
-            "smtp_host",
-            "smtp_port",
-            "smtp_username",
-            "smtp_password",
-            "smtp_use_tls",
             "default_from_email",
             "default_from_name",
             "api_key",
             "created_at",
         )
         read_only_fields = ("api_key", "created_at")
-        extra_kwargs = {
-            "sendgrid_api_key": {"write_only": True},
-            "smtp_password": {"write_only": True},
-        }
 
 
 class StoreCreateSerializer(serializers.ModelSerializer):
@@ -46,12 +36,6 @@ class StoreCreateSerializer(serializers.ModelSerializer):
             "name",
             "shop_url",
             "email_provider",
-            "sendgrid_api_key",
-            "smtp_host",
-            "smtp_port",
-            "smtp_username",
-            "smtp_password",
-            "smtp_use_tls",
             "default_from_email",
             "default_from_name",
         )

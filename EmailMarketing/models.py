@@ -129,3 +129,20 @@ class EmailTemplateMedia(TimeStampedModel):
     file_type = models.CharField(max_length=50, default="image")
     is_active = models.BooleanField(default=True)
 
+class StoreSenderIdentity(TimeStampedModel):
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name="sender_identities")
+    mode = models.CharField(max_length=50, default="platform_domain") 
+    brand_name = models.CharField(max_length=255)
+    from_email = models.EmailField()
+    reply_to_email = models.EmailField()
+    domain = models.CharField(max_length=255, blank=True, null=True) 
+    sendgrid_domain_id = models.CharField(max_length=255, blank=True, null=True)
+    dns_records = models.JSONField(blank=True, null=True)
+    status = models.CharField(max_length=50, default="pending") 
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["store", "is_active"]),
+        ]
+

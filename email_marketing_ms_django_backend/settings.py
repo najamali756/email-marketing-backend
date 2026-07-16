@@ -131,3 +131,19 @@ REST_FRAMEWORK = {
 EMAIL_MARKETING_BATCH_SIZE = int(os.environ.get("EMAIL_MARKETING_BATCH_SIZE", 100))
 EMAIL_MARKETING_BATCH_SLEEP = float(os.environ.get("EMAIL_MARKETING_BATCH_SLEEP", 0.5))
 EMAIL_MARKETING_PUBLIC_URL = os.environ.get("EMAIL_MARKETING_PUBLIC_URL", "")
+
+# AWS SES Global SMTP & API Settings
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST ="email-smtp.eu-north-1.amazonaws.com"
+EMAIL_PORT = 587
+EMAIL_USE_TLS = "True"
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "dummy")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "dummy")
+
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
+AWS_SES_REGION_NAME = os.environ.get("AWS_SES_REGION_NAME", "us-east-1")
+
+# The platform domain name for email routing fallbacks
+SENDGRID_PLATFORM_DOMAIN = os.environ.get("SENDGRID_PLATFORM_DOMAIN", "ntechgreenbridge.com")
+

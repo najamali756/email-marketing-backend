@@ -3,9 +3,9 @@ import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
-
+from django.conf import settings
+from django.utils.text import slugify
+from EmailMarketing.models import StoreSenderIdentity
 from Accounts.models import Store
 
 
@@ -14,83 +14,52 @@ class EmailProvider:
         self.store = store
 
     def send(self, to_email, subject, html_body, from_name=None):
-        from_name = from_name or self.store.default_from_name or self.store.name
-        from_email = self.store.default_from_email
+        # 1. Resolve from_email and reply_to based on StoreSenderIdentity
+        identity = StoreSenderIdentity.objects.filter(store=self.store, is_active=True).first()
+        
+        from_name = from_name or (identity.brand_name if identity else self.store.default_from_name or self.store.name)
+        
+        # Determine from_email depending on the mode
+        platform_domain = getattr(settings, "SENDGRID_PLATFORM_DOMAIN", "ntechgreenbridge.com")
+        if identity and identity.status == "verified":
+            if identity.mode == "platform_domain":
+                brand_slug = slugify(identity.brand_name)
+                from_email = f"{brand_slug}@{platform_domain}"
+            else: # custom_domain
+                from_email = identity.from_email
+            reply_to = identity.reply_to_email
+        else:
+            # Fall back to default_from_email since it may be verified as a single sender
+            from_email = self.store.default_from_email or f"noreply@{platform_domain}"
+            reply_to = None
 
-        if not from_email:
-            # Fallback to the client's admin/first user email
-            from Accounts.models import ClientUser
-            client_user = ClientUser.objects.filter(client=self.store.client).first()
-            if client_user:
-                from_email = client_user.user.email
-            else:
-                from_email = "noreply@mailflow.com"
+        # 2. Get SMTP settings
+        host = getattr(settings, "EMAIL_HOST", "smtp.sendgrid.net")
+        port = getattr(settings, "EMAIL_PORT", 587)
+        username = getattr(settings, "EMAIL_HOST_USER", "apikey")
+        password = getattr(settings, "EMAIL_HOST_PASSWORD", "")
 
-        if self.store.email_provider == "sendgrid":
-            if not self.store.sendgrid_api_key:
-                if self.store.smtp_host:
-                    return self._send_smtp(to_email, subject, html_body, from_email, from_name)
-                else:
-                    return self._send_smtp_mock(to_email, subject, html_body, from_email, from_name)
-            return self._send_sendgrid(to_email, subject, html_body, from_email, from_name)
+        # 3. Send using SendGrid global SMTP
+        message = MIMEMultipart("alternative")
+        message["Subject"] = subject
+        message["From"] = f"{from_name} <{from_email}>"
+        message["To"] = to_email
+        if reply_to:
+            message["Reply-To"] = reply_to
+        message.attach(MIMEText(html_body, "html"))
 
-        if not self.store.smtp_host:
-            return self._send_smtp_mock(to_email, subject, html_body, from_email, from_name)
-        return self._send_smtp(to_email, subject, html_body, from_email, from_name)
+        if port == 465:
+            server = smtplib.SMTP_SSL(host, port)
+        else:
+            server = smtplib.SMTP(host, port)
+            if getattr(settings, "EMAIL_USE_TLS", True):
+                server.starttls(context=ssl.create_default_context())
 
-    def _send_smtp_mock(self, to_email, subject, html_body, from_email, from_name):
-        import os
-        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        log_path = os.path.join(backend_dir, "sent_emails.log")
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write("="*80 + "\n")
-                f.write(f"FROM: {from_name} <{from_email}>\n")
-                f.write(f"TO: {to_email}\n")
-                f.write(f"SUBJECT: {subject}\n")
-                f.write("BODY:\n")
-                f.write(html_body + "\n")
-                f.write("="*80 + "\n\n")
-        except Exception as e:
-            print(f"Error writing mock email log: {e}")
+        if username and password:
+            print(f"[DEBUG EMAIL SENDER] Connecting to SMTP: {host}:{port} with user: {username}, password length: {len(password) if password else 0}")
+            print(f"[DEBUG EMAIL SENDER] Resolving From: {from_name} <{from_email}>, To: {to_email}, Reply-To: {reply_to}")
+            server.login(username, password)
+
+        server.sendmail(from_email, [to_email], message.as_string())
+        server.quit()
         return 200
-
-    def _send_sendgrid(self, to_email, subject, html_body, from_email, from_name):
-        try:
-            message = Mail(
-                from_email=(from_email, from_name),
-                to_emails=to_email,
-                subject=subject,
-                html_content=html_body,
-            )
-            client = SendGridAPIClient(self.store.sendgrid_api_key)
-            response = client.send(message)
-            return response.status_code
-        except Exception as e:
-            print(f"SendGrid sending failed: {e}. Falling back to mock email logging.")
-            return self._send_smtp_mock(to_email, subject, html_body, from_email, from_name)
-
-    def _send_smtp(self, to_email, subject, html_body, from_email, from_name):
-        try:
-            message = MIMEMultipart("alternative")
-            message["Subject"] = subject
-            message["From"] = f"{from_name} <{from_email}>"
-            message["To"] = to_email
-            message.attach(MIMEText(html_body, "html"))
-
-            if self.store.smtp_port == 465:
-                server = smtplib.SMTP_SSL(self.store.smtp_host, self.store.smtp_port)
-            else:
-                server = smtplib.SMTP(self.store.smtp_host, self.store.smtp_port)
-                if self.store.smtp_use_tls:
-                    server.starttls(context=ssl.create_default_context())
-
-            if self.store.smtp_username and self.store.smtp_password:
-                server.login(self.store.smtp_username, self.store.smtp_password)
-
-            server.sendmail(from_email, [to_email], message.as_string())
-            server.quit()
-            return 200
-        except Exception as e:
-            print(f"SMTP sending failed: {e}.")
-            raise e

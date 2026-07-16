@@ -13,9 +13,12 @@ from EmailMarketing.Views.Campaigns import (
 from EmailMarketing.Views.Templates import EmailTemplateDetailView, EmailTemplateListCreateView
 from EmailMarketing.Views.Media import EmailTemplateMediaListView, EmailTemplateMediaDetailView
 from EmailMarketing.Views.Unsubscribe import EmailUnsubscribeView
+from EmailMarketing.Views.SenderIdentity import StoreSenderIdentityView, ValidateSenderIdentityView
 
 urlpatterns = [
     url(r"^brandSettings$", EmailBrandSettingsView.as_view()),
+    url(r"^sender-identity$", StoreSenderIdentityView.as_view()),
+    url(r"^sender-identity/validate$", ValidateSenderIdentityView.as_view()),
     url(r"^templates$", EmailTemplateListCreateView.as_view()),
     url(r"^templates/(?P<pk>\d+)$", EmailTemplateDetailView.as_view()),
     url(r"^templates/media$", EmailTemplateMediaListView.as_view()),

@@ -35,12 +35,6 @@ class Store(TimeStampedModel):
     is_active = models.BooleanField(default=True)
 
     email_provider = models.CharField(max_length=50, default="sendgrid")
-    sendgrid_api_key = models.CharField(max_length=500, blank=True, null=True)
-    smtp_host = models.CharField(max_length=255, blank=True, null=True)
-    smtp_port = models.IntegerField(default=587)
-    smtp_username = models.CharField(max_length=255, blank=True, null=True)
-    smtp_password = models.CharField(max_length=255, blank=True, null=True)
-    smtp_use_tls = models.BooleanField(default=True)
     default_from_email = models.EmailField(blank=True, null=True)
     default_from_name = models.CharField(max_length=255, blank=True, null=True)
 
