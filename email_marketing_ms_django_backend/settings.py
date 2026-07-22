@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "Accounts",
     "EmailMarketing",
+    "shopify_integration",
 ]
 
 AUTH_USER_MODEL = "Accounts.User"
@@ -146,4 +147,12 @@ AWS_SES_REGION_NAME = os.environ.get("AWS_SES_REGION_NAME", "us-east-1")
 
 # The platform domain name for email routing fallbacks
 SENDGRID_PLATFORM_DOMAIN = os.environ.get("SENDGRID_PLATFORM_DOMAIN", "ntechgreenbridge.com")
+
+# Shopify Integration Settings
+SHOPIFY_API_KEY = os.environ.get("SHOPIFY_API_KEY", "")
+SHOPIFY_API_SECRET = os.environ.get("SHOPIFY_API_SECRET", "")
+SHOPIFY_SITE_URL = os.environ.get("SHOPIFY_SITE_URL", "localhost:3000")
+SHOPIFY_APP_API_SCOPE = os.environ.get("SHOPIFY_APP_API_SCOPE", "read_customers,write_customers")
+
+
 

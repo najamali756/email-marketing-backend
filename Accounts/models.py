@@ -39,7 +39,6 @@ class Store(TimeStampedModel):
     default_from_name = models.CharField(max_length=255, blank=True, null=True)
 
     class Meta:
-        unique_together = ("client", "shop_url")
         indexes = [
             models.Index(fields=["client", "is_active"]),
             models.Index(fields=["api_key"]),

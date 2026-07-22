@@ -4,7 +4,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView, RetrieveUpdateDestroyAPIView
 
 from Accounts.mixins import ClientContextMixin, StoreContextMixin
 from Accounts.permissions import IsClientAdmin, HasStoreContext
@@ -210,14 +210,14 @@ class StoreListCreateView(ClientContextMixin, ListCreateAPIView):
         serializer.save(client=self.request.client)
 
 
-class StoreDetailView(ClientContextMixin, RetrieveUpdateAPIView):
+class StoreDetailView(ClientContextMixin, RetrieveUpdateDestroyAPIView):
     serializer_class = StoreSerializer
 
     def get_queryset(self):
         return Store.objects.filter(client=self.request.client)
 
     def get_permissions(self):
-        if self.request.method in ["PUT", "PATCH"]:
+        if self.request.method in ["PUT", "PATCH", "DELETE"]:
             return [IsAuthenticated(), IsClientAdmin()]
         return [IsAuthenticated()]
 
