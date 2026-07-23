@@ -131,7 +131,7 @@ REST_FRAMEWORK = {
 
 EMAIL_MARKETING_BATCH_SIZE = int(os.environ.get("EMAIL_MARKETING_BATCH_SIZE", 100))
 EMAIL_MARKETING_BATCH_SLEEP = float(os.environ.get("EMAIL_MARKETING_BATCH_SLEEP", 0.5))
-EMAIL_MARKETING_PUBLIC_URL = os.environ.get("EMAIL_MARKETING_PUBLIC_URL", "")
+EMAIL_MARKETING_PUBLIC_URL = os.environ.get("EMAIL_MARKETING_PUBLIC_URL", "https://marketing-be.technogroves.com")
 
 # AWS SES Global SMTP & API Settings
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
@@ -151,7 +151,7 @@ SENDGRID_PLATFORM_DOMAIN = os.environ.get("SENDGRID_PLATFORM_DOMAIN", "ntechgree
 # Shopify Integration Settings
 SHOPIFY_API_KEY = os.environ.get("SHOPIFY_API_KEY", "")
 SHOPIFY_API_SECRET = os.environ.get("SHOPIFY_API_SECRET", "")
-SHOPIFY_SITE_URL = os.environ.get("SHOPIFY_SITE_URL", "localhost:3000")
+SHOPIFY_SITE_URL = os.environ.get("SHOPIFY_SITE_URL", "https://marketing.technogroves.com/")
 SHOPIFY_APP_API_SCOPE = os.environ.get("SHOPIFY_APP_API_SCOPE", "read_customers,write_customers")
 
 

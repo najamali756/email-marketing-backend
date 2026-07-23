@@ -208,7 +208,7 @@ class ShopifyCallbackView(APIView):
             sync_customers_in_background(clean_host, access_token, store)
             
             # Redirect back to the frontend app
-            frontend_url = getattr(settings_conf, "SHOPIFY_SITE_URL", "localhost:3000")
+            frontend_url = getattr(settings_conf, "SHOPIFY_SITE_URL", "https://marketing.technogroves.com/")
             if not frontend_url.startswith("http://") and not frontend_url.startswith("https://"):
                 if "localhost" in frontend_url or "127.0.0.1" in frontend_url:
                     frontend_url = f"http://{frontend_url}"
