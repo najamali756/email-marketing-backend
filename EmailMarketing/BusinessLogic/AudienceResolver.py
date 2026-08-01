@@ -23,6 +23,10 @@ class AudienceResolver:
     def apply_filters(self, queryset, filter_config=None):
         filter_config = filter_config or {}
 
+        member_emails = filter_config.get("member_emails") or []
+        if member_emails:
+            queryset = queryset.filter(email__in=member_emails)
+
         tags = filter_config.get("tags") or []
         if tags:
             for tag in tags:

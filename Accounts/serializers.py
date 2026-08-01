@@ -58,6 +58,7 @@ class ContactSerializer(serializers.ModelSerializer):
             "total_orders",
             "total_spent",
             "last_order_at",
+            "raw_data",
             "created_at",
             "updated_at",
         )

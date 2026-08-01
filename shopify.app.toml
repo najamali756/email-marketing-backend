@@ -1,0 +1,22 @@
+# Shopify App Configuration File
+
+client_id = "b7cca2d033f5c118c523848c5eab6493"
+name = "Omnexa"
+application_url = "https://marketing-be.technogroves.com/shopify/install/"
+embedded = false
+
+[webhooks]
+api_version = "2026-07"
+
+[webhooks.privacy_compliance]
+customer_data_request_url = "https://marketing-be.technogroves.com/shopify/webhooks/customers/data_request/"
+customer_deletion_url = "https://marketing-be.technogroves.com/shopify/webhooks/customers/redact/"
+shop_deletion_url = "https://marketing-be.technogroves.com/shopify/webhooks/shop/redact/"
+
+[access_scopes]
+scopes = "read_customers,write_customers"
+optional_scopes = [ ]
+use_legacy_install_flow = true
+
+[auth]
+redirect_urls = [ "https://marketing-be.technogroves.com/shopify/callback/" ]

@@ -137,6 +137,8 @@ class Contact(TimeStampedModel):
     total_orders = models.IntegerField(default=0)
     total_spent = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     last_order_at = models.DateTimeField(blank=True, null=True)
+    raw_data = models.JSONField(default=dict, blank=True)
+    segments = models.ManyToManyField("EmailMarketing.EmailSegment", related_name="contacts", blank=True)
 
     class Meta:
         unique_together = ("store", "email")

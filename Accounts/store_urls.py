@@ -5,6 +5,7 @@ from Accounts.views import (
     ContactCsvUploadView,
     ContactDetailView,
     ContactListCreateView,
+    ContactSubscribeAllView,
     StoreDetailView,
     StoreListCreateView,
 )
@@ -15,5 +16,6 @@ urlpatterns = [
     url(r"^contacts$", ContactListCreateView.as_view()),
     url(r"^contacts/uploadCsv$", ContactCsvUploadView.as_view()),
     url(r"^contacts/bulkUpsert$", ContactBulkUpsertView.as_view()),
+    url(r"^contacts/subscribeAll$", ContactSubscribeAllView.as_view()),
     url(r"^contacts/(?P<pk>\d+)$", ContactDetailView.as_view()),
 ]

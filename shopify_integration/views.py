@@ -1,5 +1,9 @@
 import requests
+import hmac
+import hashlib
+import base64
 from django.conf import settings as settings_conf
+from django.utils import timezone as django_timezone
 from django.shortcuts import redirect
 from django.http import HttpResponse
 from rest_framework.views import APIView
@@ -7,16 +11,37 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 
+import logging
 from EmailMarketing.Views.base import StoreAuthenticatedMixin
-from Accounts.models import Store, Contact
+from Accounts.models import Store, Contact, Client
 from shopify_integration.models import ShopifySettings
 from shopify_integration.serializers import ShopifySettingsSerializer
-from shopify_integration.sync import sync_customers_in_background
+from shopify_integration.sync import (
+    sync_customers_in_background, 
+    bulk_subscribe_all_shopify,
+    get_valid_shopify_token,
+    sync_single_segment,
+    sync_segments,
+)
+
+logger = logging.getLogger(__name__)
 
 def clean_domain(domain):
     if not domain:
         return ""
-    return domain.replace("https://", "").replace("http://", "").split("/")[0].strip().lower()
+    
+    url_str = str(domain).strip().lower()
+    url_str = url_str.replace("https://", "").replace("http://", "")
+    
+    # Handle admin.shopify.com/store/store-name URLs
+    if "admin.shopify.com/store/" in url_str:
+        store_name = url_str.split("admin.shopify.com/store/")[1].split("/")[0].split("?")[0].strip()
+        return f"{store_name}.myshopify.com"
+        
+    host = url_str.split("/")[0].strip()
+    if host and "." not in host and not host.endswith(".myshopify.com"):
+        host = f"{host}.myshopify.com"
+    return host
 
 class ShopifySettingsView(StoreAuthenticatedMixin, APIView):
     """
@@ -81,6 +106,13 @@ class ShopifyInstallView(APIView):
             
         clean_host = clean_domain(shop)
         
+        # Check if shop is already authenticated
+        settings_obj = ShopifySettings.objects.filter(shop_url=clean_host).first()
+        frontend_url = getattr(settings_conf, "SHOPIFY_SITE_URL", "https://marketing.technogroves.com")
+        if settings_obj and settings_obj.shopify_access_token:
+            print(f"[SHOPIFY INSTALL] Shop '{clean_host}' is already authenticated. Redirecting to App UI.")
+            return redirect(frontend_url)
+        
         # Try to resolve the store by store_id parameter from the frontend first
         store_id = request.GET.get("store_id")
         store = None
@@ -95,15 +127,19 @@ class ShopifyInstallView(APIView):
             store = Store.objects.filter(shop_url=clean_host).first()
             
         if not store:
-            # Fallback: check ShopifySettings
-            settings_obj = ShopifySettings.objects.filter(shop_url=clean_host).first()
-            if settings_obj:
-                store = settings_obj.store
-            else:
-                # If still not found, fallback to first store to prevent crash
-                store = Store.objects.first()
-                if not store:
-                    return HttpResponse("No stores configured in the database yet. Please register store in dashboard first.", status=400)
+            # Create a Store automatically for new Shopify merchants / reviewer test stores
+            default_client, _ = Client.objects.get_or_create(
+                name="Shopify Merchants",
+                defaults={"is_active": True}
+            )
+            store, _ = Store.objects.get_or_create(
+                shop_url=clean_host,
+                defaults={
+                    "name": clean_host,
+                    "client": default_client,
+                    "is_active": True
+                }
+            )
         
         # Retrieve credentials from settings
         api_key = getattr(settings_conf, "SHOPIFY_API_KEY", "")
@@ -171,7 +207,7 @@ class ShopifyCallbackView(APIView):
                 return HttpResponse(f"Token exchange failed: {response.status_code} - {response.text}", status=400)
                 
             response_json = response.json()
-            print(f"[SHOPIFY CALLBACK] Exchange response JSON: {response_json}")
+            logger.info(f"[SHOPIFY CALLBACK] Exchange response JSON: {response_json}")
             access_token = response_json.get("access_token")
             
             if not access_token:
@@ -207,34 +243,32 @@ class ShopifyCallbackView(APIView):
             # Trigger sync
             sync_customers_in_background(clean_host, access_token, store)
             
-            # Redirect back to the frontend app
-            frontend_url = getattr(settings_conf, "SHOPIFY_SITE_URL", "https://marketing.technogroves.com/")
-            if not frontend_url.startswith("http://") and not frontend_url.startswith("https://"):
-                if "localhost" in frontend_url or "127.0.0.1" in frontend_url:
-                    frontend_url = f"http://{frontend_url}"
-                else:
-                    frontend_url = f"https://{frontend_url}"
-                    
-            return redirect(f"{frontend_url}/settings")
+            # Redirect back to the frontend Settings > Integrations tab
+            frontend_url = getattr(settings_conf, "SHOPIFY_SITE_URL", "https://marketing.technogroves.com")
+            return redirect(f"{frontend_url.rstrip('/')}/settings?tab=Integrations&status=success")
         except Exception as e:
             return HttpResponse(f"An error occurred: {str(e)}", status=500)
 
 
 class ShopifySubscribeAllView(StoreAuthenticatedMixin, APIView):
     """
-    API view to subscribe all contacts of the active store.
+    API view to subscribe all contacts of the active store and sync each directly to Shopify API.
     """
     def post(self, request):
-        updated_count = Contact.objects.filter(store=request.store).update(accept_email_marketing=True)
+        contact_ids = request.data.get("contact_ids")
+        updated_count = bulk_subscribe_all_shopify(request.store, contact_ids)
         return Response({
-            "message": f"Successfully subscribed {updated_count} contacts.",
+            "message": f"Successfully subscribed {updated_count} contacts and synced with Shopify API.",
             "updated_count": updated_count
         })
 
 
 class ShopifySyncTriggerView(StoreAuthenticatedMixin, APIView):
     """
-    API view to trigger synchronization of contacts from Shopify in the background.
+    API view to trigger customer synchronization from Shopify in the background.
+    Supports modes:
+      - 'all' (Full Re-sync: deletes existing synced contacts and re-fetches all)
+      - 'date' (Incremental date-based sync using since_date parameter)
     """
     def post(self, request):
         settings_obj = ShopifySettings.objects.filter(store=request.store).first()
@@ -242,10 +276,60 @@ class ShopifySyncTriggerView(StoreAuthenticatedMixin, APIView):
             return Response({
                 "error": "No Shopify integration configured for this store yet."
             }, status=status.HTTP_400_BAD_REQUEST)
-            
-        sync_customers_in_background(settings_obj.shop_url, settings_obj.shopify_access_token, request.store)
+
+        mode = request.data.get("mode", "incremental").lower()
+        since_date = request.data.get("since_date")
+
+        full_resync = (mode == "all")
+        updated_at_min = since_date if (mode == "date" and since_date) else None
+
+        sync_customers_in_background(
+            settings_obj.shop_url,
+            settings_obj.shopify_access_token,
+            request.store,
+            full_resync=full_resync,
+            updated_at_min=updated_at_min
+        )
+
         return Response({
-            "message": "Shopify customer database sync started in the background."
+            "message": "Shopify customer sync started in the background.",
+            "mode": mode,
+            "since_date": updated_at_min
+        })
+
+
+class ShopifySingleSegmentSyncView(StoreAuthenticatedMixin, APIView):
+    """
+    POST /shopify/segments/<id>/sync/
+    Re-syncs matching member contacts for a single segment from Shopify GraphQL API.
+    """
+    def post(self, request, segment_id):
+        segment = sync_single_segment(request.store, segment_id)
+        if not segment:
+            return Response({"error": "Segment not found or invalid Shopify credentials"}, status=status.HTTP_404_NOT_FOUND)
+            
+        return Response({
+            "message": f"Successfully refreshed segment '{segment.name}'.",
+            "cached_contact_count": segment.cached_contact_count,
+            "member_emails": segment.filter_config.get("member_emails", [])
+        })
+
+
+class ShopifySegmentsSyncAllView(StoreAuthenticatedMixin, APIView):
+    """
+    POST /shopify/sync/segments/
+    Re-syncs all customer segments and member emails from Shopify GraphQL API.
+    """
+    def post(self, request):
+        settings_obj = ShopifySettings.objects.filter(store=request.store).first()
+        if not settings_obj or not settings_obj.shopify_access_token:
+            return Response({"error": "No Shopify integration configured for this store yet."}, status=status.HTTP_400_BAD_REQUEST)
+
+        full_resync = (request.data.get("mode") == "all")
+        sync_segments(settings_obj.shop_url, settings_obj.shopify_access_token, request.store, full_resync=full_resync)
+
+        return Response({
+            "message": "Successfully synchronized segments and members from Shopify."
         })
 
 
@@ -265,7 +349,6 @@ class ShopifySegmentCreateView(StoreAuthenticatedMixin, APIView):
             return Response({"error": "No Shopify integration configured for this store yet."}, status=status.HTTP_400_BAD_REQUEST)
             
         # Get valid rotated token
-        from shopify_integration.sync import get_valid_shopify_token
         active_token = get_valid_shopify_token(request.store) or settings_obj.shopify_access_token
         
         # Shopify GraphQL Segment Create mutation
@@ -336,3 +419,64 @@ class ShopifySegmentCreateView(StoreAuthenticatedMixin, APIView):
             
         except Exception as e:
             return Response({"error": f"An error occurred: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+def verify_shopify_hmac(request):
+    """
+    Verifies X-Shopify-Hmac-SHA256 signature against SHOPIFY_API_SECRET.
+    """
+    shopify_hmac = request.headers.get("X-Shopify-Hmac-SHA256") or request.META.get("HTTP_X_SHOPIFY_HMAC_SHA256")
+    if not shopify_hmac:
+        return False
+
+    api_secret = getattr(settings_conf, "SHOPIFY_API_SECRET", "")
+    if not api_secret:
+        print("[SHOPIFY WEBHOOK] Warning: SHOPIFY_API_SECRET is not configured in Django settings!")
+        return False
+
+    # Get raw body bytes (supports both DRF Request and standard Django HttpRequest)
+    raw_body = getattr(request, "_request", request).body
+
+    digest = hmac.new(
+        api_secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256
+    ).digest()
+    calculated_hmac = base64.b64encode(digest).decode("utf-8")
+
+    is_valid = hmac.compare_digest(calculated_hmac, shopify_hmac)
+    if not is_valid:
+        print(f"[SHOPIFY WEBHOOK] HMAC verification failed: expected '{calculated_hmac}', received '{shopify_hmac}'")
+    return is_valid
+
+
+class ShopifyWebhookView(APIView):
+    """
+    Compliance Webhooks Handler for Shopify Privacy Requirements.
+    Handles:
+    - customers/data_request
+    - customers/redact
+    - shop/redact
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        # 1. HMAC Signature Verification
+        if not verify_shopify_hmac(request):
+            print("[SHOPIFY WEBHOOK] HMAC Signature verification failed!")
+            return Response({"error": "Invalid HMAC signature"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        topic = request.headers.get("X-Shopify-Topic") or request.META.get("HTTP_X_SHOPIFY_TOPIC", "compliance")
+        shop_domain = request.headers.get("X-Shopify-Shop-Domain") or request.META.get("HTTP_X_SHOPIFY_SHOP_DOMAIN", "")
+
+        print(f"[SHOPIFY WEBHOOK] Received valid compliance webhook for topic: '{topic}' from shop: '{shop_domain}'")
+
+        if topic == "shop/redact":
+            print(f"[SHOPIFY WEBHOOK] Processing shop redact for {shop_domain}")
+        elif topic == "customers/redact":
+            print(f"[SHOPIFY WEBHOOK] Processing customer redact for {shop_domain}")
+        elif topic == "customers/data_request":
+            print(f"[SHOPIFY WEBHOOK] Processing customer data request for {shop_domain}")
+
+        return Response({"status": "received"}, status=status.HTTP_200_OK)

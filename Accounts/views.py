@@ -1,4 +1,5 @@
 from django.utils import timezone
+from django.db.models import Q
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -23,6 +24,7 @@ from Accounts.serializers import (
     build_client_access_list,
 )
 from Accounts.BusinessLogic.CsvContactImporter import CsvContactImporter
+from shopify_integration.sync import bulk_update_marketing_consent_shopify
 
 
 class RegisterView(APIView):
@@ -223,18 +225,108 @@ class StoreDetailView(ClientContextMixin, RetrieveUpdateDestroyAPIView):
 
 
 # Contacts & Synchronization (Consolidated from Stores app)
-class ContactListCreateView(StoreContextMixin, ListCreateAPIView):
+class ContactListCreateView(StoreContextMixin, APIView):
     permission_classes = [HasStoreContext]
-    serializer_class = ContactSerializer
 
-    def get_queryset(self):
-        return Contact.objects.filter(store=self.request.store).order_by("-created_at")
+    def get(self, request):
+        qs = Contact.objects.filter(store=request.store).order_by("-created_at")
 
-    def perform_create(self, serializer):
-        serializer.save(store=self.request.store)
+        # 1. Server-side Search
+        search = request.GET.get("search", "").strip()
+        if search:
+            qs = qs.filter(
+                Q(email__icontains=search) |
+                Q(first_name__icontains=search) |
+                Q(last_name__icontains=search) |
+                Q(phone__icontains=search) |
+                Q(city__icontains=search) |
+                Q(country__icontains=search)
+            )
+
+        # 2. Server-side Status Filter (subscribed / unsubscribed)
+        status_param = request.GET.get("status", "").strip().lower()
+        if status_param == "subscribed":
+            qs = qs.filter(accept_email_marketing=True)
+        elif status_param == "unsubscribed":
+            qs = qs.filter(accept_email_marketing=False)
+
+        # 3. Server-side Segment Filter
+        segment_id_param = request.GET.get("segment_id", "").strip()
+        if segment_id_param:
+            from EmailMarketing.models import EmailSegment
+            segment_obj = EmailSegment.objects.filter(store=request.store, id=segment_id_param).first()
+            if segment_obj:
+                member_emails = segment_obj.filter_config.get("member_emails", []) if isinstance(segment_obj.filter_config, dict) else []
+                qs = qs.filter(Q(segments=segment_obj) | Q(email__in=member_emails)).distinct()
+
+        # 4. Server-side Pagination
+        try:
+            page = int(request.GET.get("page", 1))
+        except ValueError:
+            page = 1
+
+        try:
+            page_size = int(request.GET.get("page_size", 20))
+        except ValueError:
+            page_size = 20
+
+        total_count = qs.count()
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
+
+        offset = (page - 1) * page_size
+        page_qs = qs[offset:offset + page_size]
+
+        serializer = ContactSerializer(page_qs, many=True)
+        return Response({
+            "count": total_count,
+            "total_pages": total_pages,
+            "current_page": page,
+            "page_size": page_size,
+            "results": serializer.data
+        })
+
+    def post(self, request):
+        serializer = ContactSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(store=request.store)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class ContactDetailView(StoreContextMixin, RetrieveUpdateAPIView):
+class ContactSubscribeAllView(StoreContextMixin, APIView):
+    """
+    Unified Consent Endpoint: Handles Subscribe & Unsubscribe for Single Contact, Selected Contacts, or Bulk Store Contacts.
+    Accepts:
+      - accept_email_marketing: bool (default True)
+      - contact_id: int/str (optional single contact ID)
+      - contact_ids: list (optional list of contact IDs)
+    """
+    permission_classes = [HasStoreContext]
+
+    def post(self, request):
+        accepts_marketing = request.data.get("accept_email_marketing", True)
+        if isinstance(accepts_marketing, str):
+            accepts_marketing = (accepts_marketing.lower() != "false")
+
+        contact_id = request.data.get("contact_id")
+        contact_ids = request.data.get("contact_ids") or []
+        if contact_id:
+            contact_ids.append(contact_id)
+
+        updated_count = bulk_update_marketing_consent_shopify(
+            request.store,
+            accepts_marketing=accepts_marketing,
+            contact_ids=contact_ids if contact_ids else None
+        )
+
+        action_str = "subscribed" if accepts_marketing else "unsubscribed"
+        return Response({
+            "detail": f"Successfully {action_str} {updated_count} contact(s) and synced with Shopify API.",
+            "updated_count": updated_count,
+            "accept_email_marketing": accepts_marketing
+        })
+
+
+class ContactDetailView(StoreContextMixin, RetrieveUpdateDestroyAPIView):
     permission_classes = [HasStoreContext]
     serializer_class = ContactSerializer
 

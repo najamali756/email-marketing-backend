@@ -1,0 +1,8 @@
+{
+  "name": "email-marketing-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Email Marketing Django Backend with Shopify Integration",
+  "scripts": {},
+  "dependencies": {}
+}
