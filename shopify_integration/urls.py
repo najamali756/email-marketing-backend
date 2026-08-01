@@ -11,6 +11,11 @@ from shopify_integration.views import (
     ShopifyWebhookView
 )
 
+from shopify_integration.webhooks import (
+    ShopifyWebhookRegisterView,
+    ShopifyWebhookReceiverView,
+)
+
 urlpatterns = [
     path('settings/', ShopifySettingsView.as_view(), name='shopify-settings'),
     path('install/', ShopifyInstallView.as_view(), name='shopify-install'),
@@ -20,6 +25,8 @@ urlpatterns = [
     path('sync/segments/', ShopifySegmentsSyncAllView.as_view(), name='shopify-sync-segments-all'),
     path('segments/<int:segment_id>/sync/', ShopifySingleSegmentSyncView.as_view(), name='shopify-single-segment-sync'),
     path('segments/create/', ShopifySegmentCreateView.as_view(), name='shopify-segments-create'),
+    path('webhooks/register/', ShopifyWebhookRegisterView.as_view(), name='shopify-webhooks-register'),
+    path('webhooks/receiver/', ShopifyWebhookReceiverView.as_view(), name='shopify-webhooks-receiver'),
     re_path(r'^webhooks/customers/data_request/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-data-request'),
     re_path(r'^webhooks/customers/redact/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-customer-redact'),
     re_path(r'^webhooks/shop/redact/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-shop-redact'),
