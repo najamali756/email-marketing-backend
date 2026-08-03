@@ -212,7 +212,7 @@ class ShopifyWebhookReceiverView(APIView):
             return HttpResponse("Shop domain not registered", status=404)
 
         store = settings_obj.store
-        api_secret = getattr(settings_conf, "SHOPIFY_API_SECRET", "")
+        api_secret = settings_obj.get_api_secret() if settings_obj else getattr(settings_conf, "SHOPIFY_API_SECRET", "")
 
         # Verify HMAC Signature
         if api_secret and shopify_hmac:

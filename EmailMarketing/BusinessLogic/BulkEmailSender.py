@@ -31,15 +31,32 @@ class BulkEmailSender:
             .first()
         )
 
-    def build_recipients(self):
+    def build_recipients(self, segment_ids=None, target_all_contacts=False, specific_emails=None):
+        from Accounts.models import Contact
+        from EmailMarketing.models import EmailSegment
         from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 
         campaign = self._load_campaign()
         if not campaign:
             raise ValueError("Campaign not found")
 
-        filter_config = campaign.segment.filter_config if campaign.segment else {}
-        contacts = AudienceResolver(campaign.store).resolve(filter_config)
+        contacts = Contact.objects.none()
+
+        if specific_emails:
+            contacts = Contact.objects.filter(store=campaign.store, email__in=specific_emails)
+        elif target_all_contacts:
+            contacts = Contact.objects.filter(store=campaign.store, accept_email_marketing=True)
+        elif segment_ids:
+            segments = EmailSegment.objects.filter(id__in=segment_ids, store=campaign.store)
+            for seg in segments:
+                q = AudienceResolver(campaign.store).resolve(seg.filter_config or {})
+                contacts = contacts | q
+            contacts = contacts.distinct()
+        elif campaign.segment:
+            filter_config = campaign.segment.filter_config or {}
+            contacts = AudienceResolver(campaign.store).resolve(filter_config)
+        else:
+            contacts = Contact.objects.filter(store=campaign.store, accept_email_marketing=True)
 
         existing_contact_ids = set(
             EmailCampaignRecipient.objects.filter(campaign=campaign).values_list("contact_id", flat=True)
@@ -55,6 +72,15 @@ class BulkEmailSender:
                     contact=contact,
                     email=contact.email,
                     status=EmailRecipientStatusEnum.pending.value,
+                    personalization={
+                        "first_name": contact.first_name or "",
+                        "last_name": contact.last_name or "",
+                        "city": contact.city or "",
+                        "country": contact.country or "",
+                        "total_orders": str(contact.total_orders or 0),
+                        "total_spent": str(contact.total_spent or 0),
+                        "external_id": str(contact.external_id or ""),
+                    }
                 )
             )
 

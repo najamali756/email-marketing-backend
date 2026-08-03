@@ -254,10 +254,13 @@ class ContactListCreateView(StoreContextMixin, APIView):
         segment_id_param = request.GET.get("segment_id", "").strip()
         if segment_id_param:
             from EmailMarketing.models import EmailSegment
+            from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
             segment_obj = EmailSegment.objects.filter(store=request.store, id=segment_id_param).first()
             if segment_obj:
-                member_emails = segment_obj.filter_config.get("member_emails", []) if isinstance(segment_obj.filter_config, dict) else []
-                qs = qs.filter(Q(segments=segment_obj) | Q(email__in=member_emails)).distinct()
+                filter_config = segment_obj.filter_config if isinstance(segment_obj.filter_config, dict) else {}
+                member_emails = filter_config.get("member_emails", [])
+                resolved_qs = AudienceResolver(request.store).resolve(filter_config)
+                qs = qs.filter(Q(id__in=resolved_qs.values("id")) | Q(segments=segment_obj) | Q(email__in=member_emails)).distinct()
 
         # 4. Server-side Pagination
         try:

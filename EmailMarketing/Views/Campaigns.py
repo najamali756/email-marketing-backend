@@ -40,16 +40,23 @@ class BuildCampaignAudienceView(StoreAuthenticatedMixin, APIView):
         if not campaign:
             return Response({"detail": "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        total = BulkEmailSender(campaign.id).build_recipients()
+        segment_ids = request.data.get("segment_ids", [])
+        target_all_contacts = request.data.get("target_all_contacts", False)
+        specific_emails = request.data.get("specific_emails", [])
 
-        from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
-        filter_config = campaign.segment.filter_config if campaign.segment else {}
-        breakdown = AudienceResolver(request.store).estimate_breakdown(filter_config)
+        if segment_ids:
+            campaign.segment_id = segment_ids[0]
+            campaign.save(update_fields=["segment_id", "updated_at"])
+
+        total = BulkEmailSender(campaign.id).build_recipients(
+            segment_ids=segment_ids,
+            target_all_contacts=target_all_contacts,
+            specific_emails=specific_emails
+        )
 
         return Response({
             "campaign_id": campaign.id,
             "total_recipients": total,
-            "audience_breakdown": breakdown,
         })
 
 

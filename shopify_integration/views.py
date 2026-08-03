@@ -60,6 +60,8 @@ class ShopifySettingsView(StoreAuthenticatedMixin, APIView):
     def post(self, request):
         shop_url = request.data.get("shop_url")
         shopify_access_token = request.data.get("shopify_access_token")
+        custom_api_key = request.data.get("custom_api_key")
+        custom_api_secret = request.data.get("custom_api_secret")
         
         if not shop_url:
             return Response({"error": "shop_url is required"}, status=status.HTTP_400_BAD_REQUEST)
@@ -75,8 +77,12 @@ class ShopifySettingsView(StoreAuthenticatedMixin, APIView):
         if not created:
             settings_obj.shop_url = clean_host
             
-        if shopify_access_token:
-            settings_obj.shopify_access_token = shopify_access_token
+        if shopify_access_token is not None:
+            settings_obj.shopify_access_token = shopify_access_token.strip() if shopify_access_token else ""
+        if custom_api_key is not None:
+            settings_obj.custom_api_key = custom_api_key.strip() if custom_api_key else ""
+        if custom_api_secret is not None:
+            settings_obj.custom_api_secret = custom_api_secret.strip() if custom_api_secret else ""
             
         settings_obj.save()
         
@@ -141,8 +147,9 @@ class ShopifyInstallView(APIView):
                 }
             )
         
-        # Retrieve credentials from settings
-        api_key = getattr(settings_conf, "SHOPIFY_API_KEY", "")
+        # Retrieve credentials (custom app or default global fallback)
+        store_settings = getattr(store, "shopify_settings", None) or settings_obj
+        api_key = store_settings.get_api_key() if store_settings else getattr(settings_conf, "SHOPIFY_API_KEY", "")
         scopes = getattr(settings_conf, "SHOPIFY_APP_API_SCOPE", "read_customers,write_customers")
         
         # Build redirect URL
@@ -188,9 +195,10 @@ class ShopifyCallbackView(APIView):
         except (ValueError, Store.DoesNotExist):
             return HttpResponse("Invalid state parameter: store not found", status=400)
             
-        # Retrieve credentials
-        api_key = getattr(settings_conf, "SHOPIFY_API_KEY", "")
-        api_secret = getattr(settings_conf, "SHOPIFY_API_SECRET", "")
+        # Retrieve credentials (custom app or default global fallback)
+        store_settings = ShopifySettings.objects.filter(store=store).first()
+        api_key = store_settings.get_api_key() if store_settings else getattr(settings_conf, "SHOPIFY_API_KEY", "")
+        api_secret = store_settings.get_api_secret() if store_settings else getattr(settings_conf, "SHOPIFY_API_SECRET", "")
         
         # Step 4: Request permanent access token
         exchange_url = f"https://{clean_host}/admin/oauth/access_token"
