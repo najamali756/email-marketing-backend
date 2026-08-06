@@ -167,6 +167,7 @@ class ShopifyInstallView(APIView):
             f"&scope={scopes}"
             f"&redirect_uri={redirect_uri}"
             f"&state={state}"
+            f"&grant_options[]=offline"
         )
         return redirect(auth_url)
 
@@ -200,13 +201,12 @@ class ShopifyCallbackView(APIView):
         api_key = store_settings.get_api_key() if store_settings else getattr(settings_conf, "SHOPIFY_API_KEY", "")
         api_secret = store_settings.get_api_secret() if store_settings else getattr(settings_conf, "SHOPIFY_API_SECRET", "")
         
-        # Step 4: Request permanent access token
+        # Step 4: Request permanent non-expiring offline access token
         exchange_url = f"https://{clean_host}/admin/oauth/access_token"
         payload = {
             "client_id": api_key,
             "client_secret": api_secret,
-            "code": code,
-            "expiring": 1
+            "code": code
         }
         
         try:
@@ -431,15 +431,29 @@ class ShopifySegmentCreateView(StoreAuthenticatedMixin, APIView):
 
 def verify_shopify_hmac(request):
     """
-    Verifies X-Shopify-Hmac-SHA256 signature against SHOPIFY_API_SECRET.
+    Verifies X-Shopify-Hmac-SHA256 signature against custom_api_secret (from model) or SHOPIFY_API_SECRET (from env).
     """
     shopify_hmac = request.headers.get("X-Shopify-Hmac-SHA256") or request.META.get("HTTP_X_SHOPIFY_HMAC_SHA256")
     if not shopify_hmac:
         return False
 
-    api_secret = getattr(settings_conf, "SHOPIFY_API_SECRET", "")
+    shop_domain = request.headers.get("X-Shopify-Shop-Domain") or request.META.get("HTTP_X_SHOPIFY_SHOP_DOMAIN", "")
+    api_secret = ""
+
+    if shop_domain:
+        clean_shop = shop_domain.replace("https://", "").replace("http://", "").strip("/").split("/")[0].lower()
+        settings_obj = (
+            ShopifySettings.objects.filter(shop_url__icontains=clean_shop).first() or
+            ShopifySettings.objects.filter(shop_url=shop_domain).first()
+        )
+        if settings_obj:
+            api_secret = settings_obj.get_api_secret()
+
     if not api_secret:
-        print("[SHOPIFY WEBHOOK] Warning: SHOPIFY_API_SECRET is not configured in Django settings!")
+        api_secret = getattr(settings_conf, "SHOPIFY_API_SECRET", "")
+
+    if not api_secret:
+        print("[SHOPIFY WEBHOOK] Warning: SHOPIFY_API_SECRET is not configured in model or Django settings!")
         return False
 
     # Get raw body bytes (supports both DRF Request and standard Django HttpRequest)

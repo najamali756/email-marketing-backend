@@ -205,10 +205,16 @@ class ShopifyWebhookReceiverView(APIView):
         if not shop_domain:
             return HttpResponse("Missing shop domain header", status=400)
 
-        # Lookup Store settings
-        settings_obj = ShopifySettings.objects.filter(shop_url=shop_domain).first()
+        # Normalize domain (e.g. "my-store.myshopify.com")
+        clean_shop = shop_domain.replace("https://", "").replace("http://", "").strip("/").split("/")[0].lower()
+
+        # Lookup Store settings by shop_url (matching clean domain or full URL)
+        settings_obj = (
+            ShopifySettings.objects.filter(shop_url__icontains=clean_shop).first() or
+            ShopifySettings.objects.filter(shop_url=shop_domain).first()
+        )
         if not settings_obj:
-            logger.warning(f"[SHOPIFY WEBHOOK RECEIVER] No store found for domain {shop_domain}")
+            logger.warning(f"[SHOPIFY WEBHOOK RECEIVER] No store found for domain {shop_domain} (clean: {clean_shop})")
             return HttpResponse("Shop domain not registered", status=404)
 
         store = settings_obj.store

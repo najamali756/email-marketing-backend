@@ -7,6 +7,7 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
     open_rate = serializers.SerializerMethodField()
     click_rate = serializers.SerializerMethodField()
     audience_name = serializers.CharField(source="segment.name", read_only=True, default=None)
+    html_content = serializers.SerializerMethodField()
 
     class Meta:
         model = EmailCampaign
@@ -27,6 +28,13 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
 
     def get_click_rate(self, obj):
         return round((obj.click_count / obj.sent_count) * 100, 1) if obj.sent_count else 0
+
+    def get_html_content(self, obj):
+        if obj.html_content:
+            return obj.html_content
+        if obj.template and obj.template.html_content:
+            return obj.template.html_content
+        return ""
 
 
 class EmailCampaignCreateSerializer(serializers.ModelSerializer):

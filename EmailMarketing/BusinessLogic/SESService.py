@@ -7,13 +7,14 @@ class SESService:
         key_id = getattr(settings, "AWS_ACCESS_KEY_ID")
         return not key_id or "dummy" in key_id.lower() or key_id == ""
 
+
     @classmethod
     def get_client(cls):
         if cls.is_dummy():
             return None
         return boto3.client(
             'ses',
-            region_name=getattr(settings, 'AWS_SES_REGION_NAME', 'us-east-1'),
+            region_name=getattr(settings, 'AWS_SES_REGION_NAMEE', 'eu-north-1'),
             aws_access_key_id=getattr(settings, 'AWS_ACCESS_KEY_ID', None),
             aws_secret_access_key=getattr(settings, 'AWS_SECRET_ACCESS_KEY', None)
         )

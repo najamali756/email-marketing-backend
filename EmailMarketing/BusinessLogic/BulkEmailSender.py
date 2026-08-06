@@ -111,6 +111,13 @@ class BulkEmailSender:
 
         while True:
             close_old_connections()
+
+            # Dynamic check: stop if campaign was paused or cancelled by user
+            campaign.refresh_from_db()
+            if campaign.status in [EmailCampaignStatusEnum.cancelled.value, "Paused", "Cancelled"]:
+                print(f"[BULK EMAIL SENDER] Campaign {campaign.id} status is '{campaign.status}'. Stopping batch send loop.")
+                return
+
             batch = list(
                 EmailCampaignRecipient.objects.filter(
                     campaign=campaign,

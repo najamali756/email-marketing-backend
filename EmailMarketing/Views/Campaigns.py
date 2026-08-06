@@ -2,7 +2,7 @@ from rest_framework import status
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
+import logging
 from EmailMarketing.BusinessLogic.BulkEmailSender import BulkEmailSender
 from EmailMarketing.models import EmailCampaign, EmailCampaignRecipient, EmailCampaignStatusEnum
 from EmailMarketing.Serializer.CampaignSerializer import (
@@ -13,7 +13,7 @@ from EmailMarketing.Serializer.CampaignSerializer import (
 )
 from EmailMarketing.Views.base import StoreAuthenticatedMixin
 
-
+logger = logging.getLogger(__name__)
 class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -71,11 +71,15 @@ class SendCampaignView(StoreAuthenticatedMixin, APIView):
 
         if serializer.validated_data.get("test_email"):
             personalization = serializer.validated_data.get("personalization", {})
-            BulkEmailSender(campaign.id).send_test_email(
-                serializer.validated_data["test_email"],
-                personalization=personalization
-            )
-            return Response({"detail": "Test email sent."})
+            try:
+                BulkEmailSender(campaign.id).send_test_email(
+                    serializer.validated_data["test_email"],
+                    personalization=personalization
+                )
+                return Response({"detail": "Test email sent."})
+            except Exception as e:
+                logger.error(f"[SEND TEST EMAIL ERROR] Campaign {campaign_id}: {str(e)}", exc_info=True)
+                return Response({"detail": f"Failed to send test email: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
         if campaign.total_recipients == 0:
             total = BulkEmailSender(campaign.id).build_recipients()
@@ -90,6 +94,60 @@ class SendCampaignView(StoreAuthenticatedMixin, APIView):
             "detail": "Campaign send started.",
             "campaign_id": campaign.id,
             "status": EmailCampaignStatusEnum.sending.value,
+        })
+
+
+class PauseCampaignView(StoreAuthenticatedMixin, APIView):
+    def post(self, request, campaign_id):
+        campaign = EmailCampaign.objects.filter(id=campaign_id, store=request.store).first()
+        if not campaign:
+            return Response({"detail": "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if campaign.status not in [EmailCampaignStatusEnum.sending.value, "Sending"]:
+            return Response({"detail": f"Cannot pause a campaign with status '{campaign.status}'."}, status=400)
+
+        campaign.status = "Paused"
+        campaign.save(update_fields=["status", "updated_at"])
+        return Response({
+            "detail": "Campaign paused successfully.",
+            "campaign_id": campaign.id,
+            "status": "Paused",
+        })
+
+
+class ResumeCampaignView(StoreAuthenticatedMixin, APIView):
+    def post(self, request, campaign_id):
+        campaign = EmailCampaign.objects.filter(id=campaign_id, store=request.store).first()
+        if not campaign:
+            return Response({"detail": "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if campaign.status in [EmailCampaignStatusEnum.sent.value, "Sent"]:
+            return Response({"detail": "Campaign has already completed."}, status=400)
+
+        # Update status to Sending and trigger async batch worker
+        campaign.status = EmailCampaignStatusEnum.sending.value
+        campaign.save(update_fields=["status", "updated_at"])
+
+        BulkEmailSender(campaign.id).send_async()
+        return Response({
+            "detail": "Campaign send resumed successfully.",
+            "campaign_id": campaign.id,
+            "status": EmailCampaignStatusEnum.sending.value,
+        })
+
+
+class CancelCampaignView(StoreAuthenticatedMixin, APIView):
+    def post(self, request, campaign_id):
+        campaign = EmailCampaign.objects.filter(id=campaign_id, store=request.store).first()
+        if not campaign:
+            return Response({"detail": "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        campaign.status = EmailCampaignStatusEnum.cancelled.value
+        campaign.save(update_fields=["status", "updated_at"])
+        return Response({
+            "detail": "Campaign stopped / cancelled.",
+            "campaign_id": campaign.id,
+            "status": EmailCampaignStatusEnum.cancelled.value,
         })
 
 

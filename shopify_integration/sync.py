@@ -19,22 +19,32 @@ def get_valid_shopify_token(store):
     refreshes it using the refresh token, saves it, and returns the active access token.
     """
     settings_obj = ShopifySettings.objects.filter(store=store).first()
-    if not settings_obj or not settings_obj.shopify_access_token:
-        logger.warning(f"[SHOPIFY TOKEN] No settings or token found for store: {store}")
+    token = settings_obj.shopify_access_token
+    if not token:
+        logger.warning(f"[SHOPIFY TOKEN] No access token found in settings for store: {store}")
+        return None
+
+    # Sanity check: If token was saved as shpss_ (secret key), move it to custom_api_secret where it belongs
+    if token.startswith("shpss_"):
+        logger.error(f"[SHOPIFY TOKEN] Invalid token state for store '{store.name}': Access token starts with 'shpss_' (Secret key). Secret keys cannot be used as Admin access tokens.")
+        if not settings_obj.custom_api_secret:
+            settings_obj.custom_api_secret = token
+            settings_obj.shopify_access_token = None
+            settings_obj.save()
         return None
 
     # If the token doesn't expire (custom app / non-expiring token), return it directly
     if not settings_obj.shopify_refresh_token or not settings_obj.shopify_token_expires_at:
         logger.debug(f"[SHOPIFY TOKEN] Non-expiring token detected for store '{store.name}'.")
-        return settings_obj.shopify_access_token
+        return token
 
     now = django_timezone.now()
     if settings_obj.shopify_token_expires_at > now + timedelta(minutes=5):
         return settings_obj.shopify_access_token
 
     logger.info(f"[SHOPIFY TOKEN] Refreshing token for store '{store.name}'...")
-    api_key = getattr(settings_conf, "SHOPIFY_API_KEY", "")
-    api_secret = getattr(settings_conf, "SHOPIFY_API_SECRET", "")
+    api_key = settings_obj.get_api_key()
+    api_secret = settings_obj.get_api_secret()
 
     refresh_url = f"https://{settings_obj.shop_url}/admin/oauth/access_token"
     payload = {
@@ -48,6 +58,13 @@ def get_valid_shopify_token(store):
         response = requests.post(refresh_url, data=payload)
         if response.status_code != 200:
             logger.error(f"[SHOPIFY TOKEN] Refresh request failed ({response.status_code}): {response.text}")
+            # If Shopify reports invalid_request or 401, token is a permanent offline token.
+            # Clear refresh_token and expires_at so it uses the permanent access token without error.
+            if "invalid_request" in response.text or response.status_code in (400, 401):
+                logger.info(f"[SHOPIFY TOKEN] Clearing invalid refresh_token for '{store.name}' to use permanent offline token.")
+                settings_obj.shopify_refresh_token = None
+                settings_obj.shopify_token_expires_at = None
+                settings_obj.save()
             return settings_obj.shopify_access_token
 
         res_json = response.json()
@@ -104,7 +121,10 @@ def sync_customers(shop_url, access_token, store, full_resync=False, updated_at_
         try:
             response = requests.get(url, headers=headers)
             if response.status_code != 200:
-                logger.error(f"[SHOPIFY SYNC] Request failed ({response.status_code}): {response.text}")
+                if response.status_code == 401:
+                    logger.error(f"[SHOPIFY SYNC 401] Access token for store '{store.name}' ({shop_url}) was revoked or invalidated by Shopify. Re-authentication required in Settings.")
+                else:
+                    logger.error(f"[SHOPIFY SYNC] Request failed ({response.status_code}): {response.text}")
                 break
 
             data = response.json()
