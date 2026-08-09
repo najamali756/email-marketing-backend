@@ -19,6 +19,9 @@ class EmailRecipientStatusEnum(Enum):
     pending = "Pending"
     in_process = "InProcess"
     sent = "Sent"
+    opened = "Opened"
+    clicked = "Clicked"
+    unsubscribed = "Unsubscribed"
     failed = "Failed"
     skipped = "Skipped"
 
@@ -87,6 +90,7 @@ class EmailCampaign(TimeStampedModel):
     skipped_count = models.IntegerField(default=0)
     open_count = models.IntegerField(default=0)
     click_count = models.IntegerField(default=0)
+    unsubscribe_count = models.IntegerField(default=0)
     revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     last_error = models.TextField(blank=True, null=True)
     wizard_step = models.IntegerField(default=1)
@@ -101,6 +105,7 @@ class EmailCampaignRecipient(TimeStampedModel):
     sent_at = models.DateTimeField(blank=True, null=True)
     opened_at = models.DateTimeField(blank=True, null=True)
     clicked_at = models.DateTimeField(blank=True, null=True)
+    unsubscribed_at = models.DateTimeField(blank=True, null=True)
     error_message = models.TextField(blank=True, null=True)
     personalization = models.JSONField(default=dict, blank=True)
 

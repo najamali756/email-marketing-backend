@@ -15,12 +15,12 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
             "id", "name", "subject", "preview_text", "template", "segment", "status",
             "campaign_type", "scheduled_at", "sent_at", "from_name", "html_content",
             "total_recipients", "sent_count", "failed_count", "skipped_count",
-            "open_count", "click_count", "revenue", "open_rate", "click_rate",
+            "open_count", "click_count", "unsubscribe_count", "revenue", "open_rate", "click_rate",
             "audience_name", "wizard_step", "created_at", "updated_at",
         )
         read_only_fields = (
             "sent_at", "total_recipients", "sent_count", "failed_count",
-            "skipped_count", "open_count", "click_count", "revenue", "created_at", "updated_at",
+            "skipped_count", "open_count", "click_count", "unsubscribe_count", "revenue", "created_at", "updated_at",
         )
 
     def get_open_rate(self, obj):
@@ -58,7 +58,7 @@ class CampaignRecipientSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailCampaignRecipient
         fields = (
-            "id", "email", "status", "sent_at", "opened_at", "clicked_at",
+            "id", "email", "status", "sent_at", "opened_at", "clicked_at", "unsubscribed_at",
             "error_message", "contact_name",
         )
 

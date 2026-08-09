@@ -17,6 +17,7 @@ from EmailMarketing.Views.Templates import EmailTemplateDetailView, EmailTemplat
 from EmailMarketing.Views.Media import EmailTemplateMediaListView, EmailTemplateMediaDetailView
 from EmailMarketing.Views.Unsubscribe import EmailUnsubscribeView
 from EmailMarketing.Views.SenderIdentity import StoreSenderIdentityView, ValidateSenderIdentityView
+from EmailMarketing.Views.Tracking import EmailOpenTrackingView, EmailClickTrackingView
 
 urlpatterns = [
     url(r"^brandSettings$", EmailBrandSettingsView.as_view()),
@@ -38,4 +39,6 @@ urlpatterns = [
     url(r"^campaigns/(?P<campaign_id>\d+)/recipients$", CampaignRecipientsView.as_view()),
     url(r"^campaigns/(?P<campaign_id>\d+)/upload-recipients$", UploadCampaignRecipientsView.as_view()),
     url(r"^unsubscribe$", EmailUnsubscribeView.as_view()),
+    url(r"^track/open$", EmailOpenTrackingView.as_view()),
+    url(r"^track/click$", EmailClickTrackingView.as_view()),
 ]

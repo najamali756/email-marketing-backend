@@ -18,7 +18,7 @@ class EmailProvider:
     def __init__(self, store: Store):
         self.store = store
 
-    def send(self, to_email, subject, html_body, from_name=None):
+    def send(self, to_email, subject, html_body, from_name=None, unsubscribe_url=None):
         # 1. Resolve from_email and reply_to based on StoreSenderIdentity
         identity = StoreSenderIdentity.objects.filter(store=self.store, is_active=True).first()
         
@@ -65,6 +65,11 @@ class EmailProvider:
         message["To"] = to_email
         if reply_to:
             message["Reply-To"] = reply_to
+
+        # Attach RFC 8058 1-Click Unsubscribe headers for Gmail / Yahoo / Outlook
+        if unsubscribe_url:
+            message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+            message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
         message.attach(MIMEText(html_body or "", "html", "utf-8"))
 

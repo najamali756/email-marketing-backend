@@ -142,6 +142,7 @@ class BulkEmailSender:
                     },
                 )
                 body = TemplateRenderer.render(html_template, context)
+                body = self._instrument_html_body(body, recipient)
                 subject = TemplateRenderer.render(campaign.subject, context)
                 from_name = campaign.from_name or (brand_settings.default_from_name if brand_settings else None)
 
@@ -151,6 +152,7 @@ class BulkEmailSender:
                         subject=subject,
                         html_body=body,
                         from_name=from_name,
+                        unsubscribe_url=self._build_unsubscribe_url(recipient),
                     )
                     recipient.status = EmailRecipientStatusEnum.sent.value
                     recipient.sent_at = timezone.now()
@@ -221,6 +223,25 @@ class BulkEmailSender:
         if not self.public_url:
             return f"/emailMarketing/unsubscribe?token={recipient.tracking_token}"
         return f"{self.public_url.rstrip('/')}/emailMarketing/unsubscribe?token={recipient.tracking_token}"
+
+    def _instrument_html_body(self, html_content, recipient):
+        if not html_content:
+            return ""
+
+        unsub_url = self._build_unsubscribe_url(recipient)
+        # Ensure {{ unsubscribe_url }} or {unsubscribe_url} placeholders are populated
+        html_content = html_content.replace("{{ unsubscribe_url }}", unsub_url).replace("{unsubscribe_url}", unsub_url)
+
+        # 1. Embed 1x1 transparent PNG open tracking pixel
+        if self.public_url:
+            open_pixel_url = f"{self.public_url.rstrip('/')}/emailMarketing/track/open?token={recipient.tracking_token}"
+            pixel_tag = f'<img src="{open_pixel_url}" alt="" width="1" height="1" border="0" style="display:none;width:1px;height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;" />'
+            if "</body>" in html_content:
+                html_content = html_content.replace("</body>", f"{pixel_tag}</body>")
+            else:
+                html_content += pixel_tag
+
+        return html_content
 
     def send_test_email(self, to_email, personalization=None):
         campaign = self._load_campaign()
