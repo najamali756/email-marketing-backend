@@ -15,6 +15,7 @@ from shopify_integration.webhooks import (
     ShopifyWebhookRegisterView,
     ShopifyWebhookReceiverView,
 )
+from shopify_integration.views_pixel import ShopifyPixelEventIngestionView
 
 urlpatterns = [
     path('settings/', ShopifySettingsView.as_view(), name='shopify-settings'),
@@ -27,6 +28,7 @@ urlpatterns = [
     path('segments/create/', ShopifySegmentCreateView.as_view(), name='shopify-segments-create'),
     path('webhooks/register/', ShopifyWebhookRegisterView.as_view(), name='shopify-webhooks-register'),
     path('webhooks/receiver/', ShopifyWebhookReceiverView.as_view(), name='shopify-webhooks-receiver'),
+    path('events/track', ShopifyPixelEventIngestionView.as_view(), name='shopify-events-track'),
     re_path(r'^webhooks/customers/data_request/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-data-request'),
     re_path(r'^webhooks/customers/redact/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-customer-redact'),
     re_path(r'^webhooks/shop/redact/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-shop-redact'),

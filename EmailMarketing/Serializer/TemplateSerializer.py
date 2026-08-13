@@ -7,8 +7,8 @@ class EmailTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailTemplate
         fields = (
-            "id", "name", "category", "subject", "preview_text", "html_content",
-            "editor_json", "is_system", "is_active", "created_at", "updated_at",
+            "id", "name", "description", "category", "subject", "preview_text", "html_content",
+            "editor_json", "thumbnail_url", "meta", "is_system", "is_active", "created_at", "updated_at",
         )
 
 

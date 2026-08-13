@@ -27,11 +27,80 @@ class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
         serializer.save(store=self.request.store, status=EmailCampaignStatusEnum.draft.value)
 
 
+from django.db.models import Q, Sum
+from EmailMarketing.models import EmailRecipientStatusEnum
+
+
+def recalculate_campaign_stats(campaign):
+    if not campaign:
+        return campaign
+    recipients = campaign.recipients.all()
+    campaign.sent_count = recipients.filter(sent_at__isnull=False).count()
+    campaign.failed_count = recipients.filter(status=EmailRecipientStatusEnum.failed.value).count()
+    campaign.skipped_count = recipients.filter(status=EmailRecipientStatusEnum.skipped.value).count()
+    campaign.open_count = recipients.filter(
+        Q(opened_at__isnull=False) |
+        Q(status__in=[
+            EmailRecipientStatusEnum.opened.value,
+            EmailRecipientStatusEnum.clicked.value,
+            EmailRecipientStatusEnum.added_to_cart.value,
+            EmailRecipientStatusEnum.checkout_started.value,
+            EmailRecipientStatusEnum.purchased.value
+        ])
+    ).distinct().count()
+    
+    campaign.click_count = recipients.filter(
+        Q(clicked_at__isnull=False) |
+        Q(status__in=[
+            EmailRecipientStatusEnum.clicked.value,
+            EmailRecipientStatusEnum.added_to_cart.value,
+            EmailRecipientStatusEnum.checkout_started.value,
+            EmailRecipientStatusEnum.purchased.value
+        ])
+    ).distinct().count()
+    
+    campaign.unsubscribe_count = recipients.filter(unsubscribed_at__isnull=False).count()
+    campaign.orders_count = recipients.filter(
+        Q(converted_at__isnull=False) |
+        Q(status=EmailRecipientStatusEnum.purchased.value)
+    ).distinct().count()
+
+    campaign.page_view_count = recipients.aggregate(total_pv=Sum("page_view_count"))["total_pv"] or 0
+    campaign.add_to_cart_count = recipients.aggregate(total_cart=Sum("add_to_cart_count"))["total_cart"] or 0
+    campaign.checkout_started_count = recipients.aggregate(total_co=Sum("checkout_started_count"))["total_co"] or 0
+
+    rev_sum = recipients.aggregate(total_rev=Sum("order_total"))["total_rev"] or 0
+    campaign.revenue = rev_sum
+    campaign.save(update_fields=[
+        "sent_count", "failed_count", "skipped_count", "open_count",
+        "click_count", "page_view_count", "add_to_cart_count", "checkout_started_count",
+        "unsubscribe_count", "orders_count", "revenue", "updated_at"
+    ])
+    return campaign
+
+
 class EmailCampaignDetailView(StoreAuthenticatedMixin, RetrieveUpdateAPIView):
     serializer_class = EmailCampaignSerializer
 
     def get_queryset(self):
         return EmailCampaign.objects.filter(store=self.request.store)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        recalculate_campaign_stats(instance)
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+
+class RecalculateCampaignStatsView(StoreAuthenticatedMixin, APIView):
+    def post(self, request, campaign_id):
+        campaign = EmailCampaign.objects.filter(id=campaign_id, store=request.store).first()
+        if not campaign:
+            return Response({"detail": "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        recalculate_campaign_stats(campaign)
+        serializer = EmailCampaignSerializer(campaign)
+        return Response(serializer.data)
 
 
 class BuildCampaignAudienceView(StoreAuthenticatedMixin, APIView):

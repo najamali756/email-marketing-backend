@@ -232,7 +232,22 @@ class BulkEmailSender:
         # Ensure {{ unsubscribe_url }} or {unsubscribe_url} placeholders are populated
         html_content = html_content.replace("{{ unsubscribe_url }}", unsub_url).replace("{unsubscribe_url}", unsub_url)
 
-        # 1. Embed 1x1 transparent PNG open tracking pixel
+        # Append execution_id parameter to all href links for Web Pixel attribution tracking
+        import re
+        exec_id = str(recipient.tracking_token)
+
+        def _append_execution_param(match):
+            url = match.group(1)
+            # Skip mailto, tel, anchor, or unsubscribe links
+            if url.startswith("#") or url.startswith("mailto:") or url.startswith("tel:") or "unsubscribe" in url.lower():
+                return f'href="{url}"'
+            sep = "&" if "?" in url else "?"
+            tagged_url = f"{url}{sep}execution_id={exec_id}"
+            return f'href="{tagged_url}"'
+
+        html_content = re.sub(r'href=["\']([^"\']+)["\']', _append_execution_param, html_content)
+
+        # Embed 1x1 transparent PNG open tracking pixel
         if self.public_url:
             open_pixel_url = f"{self.public_url.rstrip('/')}/emailMarketing/track/open?token={recipient.tracking_token}"
             pixel_tag = f'<img src="{open_pixel_url}" alt="" width="1" height="1" border="0" style="display:none;width:1px;height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;" />'

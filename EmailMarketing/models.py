@@ -21,6 +21,9 @@ class EmailRecipientStatusEnum(Enum):
     sent = "Sent"
     opened = "Opened"
     clicked = "Clicked"
+    added_to_cart = "AddedToCart"
+    checkout_started = "CheckoutStarted"
+    purchased = "Purchased"
     unsubscribed = "Unsubscribed"
     failed = "Failed"
     skipped = "Skipped"
@@ -49,11 +52,14 @@ class EmailBrandSettings(TimeStampedModel):
 class EmailTemplate(TimeStampedModel):
     store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name="email_templates")
     name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
     category = models.CharField(max_length=50, default=EmailTemplateCategoryEnum.promotional.value)
     subject = models.CharField(max_length=500, blank=True, null=True)
     preview_text = models.CharField(max_length=500, blank=True, null=True)
     html_content = models.TextField(blank=True, null=True)
     editor_json = models.TextField(blank=True, null=True)
+    thumbnail_url = models.TextField(blank=True, null=True)
+    meta = models.JSONField(default=dict, blank=True)
     is_system = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
@@ -90,7 +96,11 @@ class EmailCampaign(TimeStampedModel):
     skipped_count = models.IntegerField(default=0)
     open_count = models.IntegerField(default=0)
     click_count = models.IntegerField(default=0)
+    page_view_count = models.IntegerField(default=0)
+    add_to_cart_count = models.IntegerField(default=0)
+    checkout_started_count = models.IntegerField(default=0)
     unsubscribe_count = models.IntegerField(default=0)
+    orders_count = models.IntegerField(default=0)
     revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     last_error = models.TextField(blank=True, null=True)
     wizard_step = models.IntegerField(default=1)
@@ -106,6 +116,14 @@ class EmailCampaignRecipient(TimeStampedModel):
     opened_at = models.DateTimeField(blank=True, null=True)
     clicked_at = models.DateTimeField(blank=True, null=True)
     unsubscribed_at = models.DateTimeField(blank=True, null=True)
+    converted_at = models.DateTimeField(blank=True, null=True)
+    page_view_count = models.IntegerField(default=0)
+    add_to_cart_count = models.IntegerField(default=0)
+    checkout_started_count = models.IntegerField(default=0)
+    cart_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    order_id = models.CharField(max_length=255, blank=True, null=True)
+    order_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    discount_code = models.CharField(max_length=255, blank=True, null=True)
     error_message = models.TextField(blank=True, null=True)
     personalization = models.JSONField(default=dict, blank=True)
 
