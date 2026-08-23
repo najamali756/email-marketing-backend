@@ -16,7 +16,7 @@ shop_deletion_url = "https://marketing-be.technogroves.com/shopify/webhooks/shop
 [access_scopes]
 scopes = "read_customers,write_customers"
 optional_scopes = [ ]
-use_legacy_install_flow = true
+use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [ "https://marketing-be.technogroves.com/shopify/callback/" ]

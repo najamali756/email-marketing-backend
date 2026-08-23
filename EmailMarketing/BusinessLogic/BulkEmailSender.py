@@ -1,6 +1,6 @@
 import os
 import time
-
+import re
 from django.conf import settings
 from django.db import close_old_connections
 from django.utils import timezone
@@ -15,6 +15,10 @@ from EmailMarketing.models import (
     EmailCampaignStatusEnum,
     EmailRecipientStatusEnum,
 )
+
+from Accounts.models import Contact
+from EmailMarketing.models import EmailSegment
+from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 
 
 class BulkEmailSender:
@@ -32,9 +36,6 @@ class BulkEmailSender:
         )
 
     def build_recipients(self, segment_ids=None, target_all_contacts=False, specific_emails=None):
-        from Accounts.models import Contact
-        from EmailMarketing.models import EmailSegment
-        from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 
         campaign = self._load_campaign()
         if not campaign:
@@ -233,7 +234,7 @@ class BulkEmailSender:
         html_content = html_content.replace("{{ unsubscribe_url }}", unsub_url).replace("{unsubscribe_url}", unsub_url)
 
         # Append execution_id parameter to all href links for Web Pixel attribution tracking
-        import re
+   
         exec_id = str(recipient.tracking_token)
 
         def _append_execution_param(match):

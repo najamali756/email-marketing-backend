@@ -25,6 +25,8 @@ from Accounts.serializers import (
 )
 from Accounts.BusinessLogic.CsvContactImporter import CsvContactImporter
 from shopify_integration.sync import bulk_update_marketing_consent_shopify
+from EmailMarketing.models import EmailSegment
+from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 
 
 class RegisterView(APIView):
@@ -253,8 +255,7 @@ class ContactListCreateView(StoreContextMixin, APIView):
         # 3. Server-side Segment Filter
         segment_id_param = request.GET.get("segment_id", "").strip()
         if segment_id_param:
-            from EmailMarketing.models import EmailSegment
-            from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
+
             segment_obj = EmailSegment.objects.filter(store=request.store, id=segment_id_param).first()
             if segment_obj:
                 filter_config = segment_obj.filter_config if isinstance(segment_obj.filter_config, dict) else {}

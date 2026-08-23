@@ -3,7 +3,6 @@ import hashlib
 import base64
 import json
 import logging
-import requests
 from django.conf import settings as settings_conf
 from django.http import HttpResponse
 from rest_framework.views import APIView
@@ -15,7 +14,11 @@ from EmailMarketing.Views.base import StoreAuthenticatedMixin
 from Accounts.models import Store, Contact
 from EmailMarketing.models import EmailSegment
 from shopify_integration.models import ShopifySettings
-from shopify_integration.sync import get_valid_shopify_token, fetch_segment_member_emails
+from shopify_integration.sync import (
+    fetch_segment_member_emails,
+    get_valid_shopify_token,
+    shopify_api_request,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +82,7 @@ def register_shopify_webhooks(store, custom_callback_url=None):
     """
 
     try:
-        resp = requests.post(gql_url, json={"query": list_query}, headers=headers)
+        resp = shopify_api_request("post", gql_url, store, headers=headers, json={"query": list_query})
         if resp.status_code == 200:
             existing_data = resp.json().get("data", {}).get("webhookSubscriptions", {}).get("edges", [])
             for edge in existing_data:
@@ -100,8 +103,25 @@ def register_shopify_webhooks(store, custom_callback_url=None):
                       }
                     }
                     """
-                    requests.post(gql_url, json={"query": delete_mutation, "variables": {"id": sub_id}}, headers=headers)
-                    logger.info(f"[SHOPIFY WEBHOOK REGISTER] Deleted old webhook {sub_id} for topic {topic}")
+                    delete_response = shopify_api_request(
+                        "post",
+                        gql_url,
+                        store,
+                        headers=headers,
+                        json={"query": delete_mutation, "variables": {"id": sub_id}},
+                    )
+                    if delete_response.status_code == 200:
+                        logger.info(f"[SHOPIFY WEBHOOK REGISTER] Deleted old webhook {sub_id} for topic {topic}")
+                    else:
+                        logger.error(
+                            f"[SHOPIFY WEBHOOK REGISTER] Failed deleting webhook {sub_id}: "
+                            f"HTTP {delete_response.status_code}"
+                        )
+
+        else:
+            logger.error(
+                f"[SHOPIFY WEBHOOK REGISTER] Failed listing webhooks: HTTP {resp.status_code}"
+            )
 
     except Exception as list_err:
         logger.warning(f"[SHOPIFY WEBHOOK REGISTER] Listing existing webhooks warning: {list_err}")
@@ -135,7 +155,13 @@ def register_shopify_webhooks(store, custom_callback_url=None):
         }
 
         try:
-            res = requests.post(gql_url, json={"query": create_mutation, "variables": variables}, headers=headers)
+            res = shopify_api_request(
+                "post",
+                gql_url,
+                store,
+                headers=headers,
+                json={"query": create_mutation, "variables": variables},
+            )
             if res.status_code == 200:
                 res_json = res.json()
                 user_errors = res_json.get("data", {}).get("webhookSubscriptionCreate", {}).get("userErrors", [])

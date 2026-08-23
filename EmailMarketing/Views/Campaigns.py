@@ -12,6 +12,15 @@ from EmailMarketing.Serializer.CampaignSerializer import (
     SendCampaignSerializer,
 )
 from EmailMarketing.Views.base import StoreAuthenticatedMixin
+import csv
+import io
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
+from EmailMarketing.BusinessLogic.TemplateRenderer import TemplateRenderer
+
+from django.db.models import Q, Sum
+from EmailMarketing.models import EmailRecipientStatusEnum
+from Accounts.models import Contact
 
 logger = logging.getLogger(__name__)
 class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
@@ -27,8 +36,6 @@ class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
         serializer.save(store=self.request.store, status=EmailCampaignStatusEnum.draft.value)
 
 
-from django.db.models import Q, Sum
-from EmailMarketing.models import EmailRecipientStatusEnum
 
 
 def recalculate_campaign_stats(campaign):
@@ -235,11 +242,7 @@ class CampaignRecipientsView(StoreAuthenticatedMixin, APIView):
 
 class UploadCampaignRecipientsView(StoreAuthenticatedMixin, APIView):
     def post(self, request, campaign_id):
-        import csv
-        import io
-        from django.core.validators import validate_email
-        from django.core.exceptions import ValidationError
-        from EmailMarketing.BusinessLogic.TemplateRenderer import TemplateRenderer
+        
 
         campaign = EmailCampaign.objects.filter(id=campaign_id, store=request.store).first()
         if not campaign:
@@ -326,7 +329,7 @@ class UploadCampaignRecipientsView(StoreAuthenticatedMixin, APIView):
         EmailCampaignRecipient.objects.filter(campaign=campaign).delete()
 
         created_count = 0
-        from Accounts.models import Contact
+       
         
         for email_val, row in valid_recipients:
             contact, created = Contact.objects.get_or_create(

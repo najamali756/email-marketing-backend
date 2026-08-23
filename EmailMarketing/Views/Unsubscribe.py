@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from EmailMarketing.models import EmailCampaignRecipient, EmailUnsubscribe
 from shopify_integration.models import ShopifySettings
 from shopify_integration.sync import update_customer_marketing_on_shopify_in_background
-
+from EmailMarketing.models import EmailRecipientStatusEnum
 
 class EmailUnsubscribeView(APIView):
     authentication_classes = []
@@ -56,7 +56,7 @@ class EmailUnsubscribeView(APIView):
         # 4. Update recipient timestamp and status
         now = timezone.now()
         recipient.unsubscribed_at = now
-        from EmailMarketing.models import EmailRecipientStatusEnum
+      
         recipient.status = EmailRecipientStatusEnum.unsubscribed.value
         recipient.save(update_fields=["unsubscribed_at", "status", "updated_at"])
 

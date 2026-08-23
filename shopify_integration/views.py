@@ -20,6 +20,7 @@ from shopify_integration.sync import (
     sync_customers_in_background, 
     bulk_subscribe_all_shopify,
     get_valid_shopify_token,
+    shopify_api_request,
     sync_single_segment,
     sync_segments,
 )
@@ -167,7 +168,6 @@ class ShopifyInstallView(APIView):
             f"&scope={scopes}"
             f"&redirect_uri={redirect_uri}"
             f"&state={state}"
-            f"&grant_options[]=offline"
         )
         return redirect(auth_url)
 
@@ -201,12 +201,15 @@ class ShopifyCallbackView(APIView):
         api_key = store_settings.get_api_key() if store_settings else getattr(settings_conf, "SHOPIFY_API_KEY", "")
         api_secret = store_settings.get_api_secret() if store_settings else getattr(settings_conf, "SHOPIFY_API_SECRET", "")
         
-        # Step 4: Request permanent non-expiring offline access token
+        # Step 4: Request an expiring offline access token.
         exchange_url = f"https://{clean_host}/admin/oauth/access_token"
         payload = {
             "client_id": api_key,
             "client_secret": api_secret,
-            "code": code
+            "code": code,
+            # Shopify only returns refresh_token/expires_in for an expiring
+            # offline token. Offline is selected by omitting per-user.
+            "expiring": "1",
         }
         
         try:
@@ -215,7 +218,10 @@ class ShopifyCallbackView(APIView):
                 return HttpResponse(f"Token exchange failed: {response.status_code} - {response.text}", status=400)
                 
             response_json = response.json()
-            logger.info(f"[SHOPIFY CALLBACK] Exchange response JSON: {response_json}")
+            logger.info(
+                "[SHOPIFY CALLBACK] Token exchange succeeded; returned fields: %s",
+                sorted(response_json.keys()),
+            )
             access_token = response_json.get("access_token")
             
             if not access_token:
@@ -232,16 +238,19 @@ class ShopifyCallbackView(APIView):
             shopify_settings.shopify_access_token = access_token
             shopify_settings.shop_url = clean_host
             
-            # Save expiring token attributes if present in response
+            # Expiring offline exchanges return both values. Do not manufacture
+            # an expiry when Shopify returns a non-expiring token.
             refresh_token = response_json.get("refresh_token")
             expires_in = response_json.get("expires_in")
-            if refresh_token:
-                shopify_settings.shopify_refresh_token = refresh_token
-            if expires_in:
-                from django.utils import timezone as django_timezone
-                from datetime import timedelta
-                shopify_settings.shopify_token_expires_at = django_timezone.now() + timedelta(seconds=int(expires_in))
-                
+            shopify_settings.shopify_refresh_token = refresh_token
+
+            from django.utils import timezone as django_timezone
+            from datetime import timedelta
+            shopify_settings.shopify_token_expires_at = (
+                django_timezone.now() + timedelta(seconds=int(expires_in))
+                if expires_in is not None
+                else None
+            )
             shopify_settings.save()
             
             # Update store's shop_url field
@@ -388,7 +397,13 @@ class ShopifySegmentCreateView(StoreAuthenticatedMixin, APIView):
         }
         
         try:
-            response = requests.post(url, json={"query": mutation, "variables": variables}, headers=headers)
+            response = shopify_api_request(
+                "post",
+                url,
+                request.store,
+                headers=headers,
+                json={"query": mutation, "variables": variables},
+            )
             if response.status_code != 200:
                 return Response({"error": f"Shopify API returned status code {response.status_code}: {response.text}"}, status=status.HTTP_400_BAD_REQUEST)
                 
