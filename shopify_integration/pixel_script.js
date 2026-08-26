@@ -23,7 +23,7 @@ const sendToOmnexaEmailApi = async (eventName, extraData = {}) => {
 
   // Console welcome message for store verification
   console.log(
-    "%c 🚀 [Omnexa Email Marketing Pixel] Active %c Event: " + eventName,
+    "%c [Omnexa Email Marketing Pixel] Active %c Event: " + eventName,
     "background: linear-gradient(135deg, #10b981, #059669); color: white; font-weight: bold; padding: 6px 10px; border-radius: 4px 0 0 4px;",
     "background: #1f2937; color: #38bdf8; font-weight: bold; padding: 6px 10px; border-radius: 0 4px 4px 0;"
   );

@@ -230,8 +230,37 @@ class BulkEmailSender:
             return ""
 
         unsub_url = self._build_unsubscribe_url(recipient)
-        # Ensure {{ unsubscribe_url }} or {unsubscribe_url} placeholders are populated
-        html_content = html_content.replace("{{ unsubscribe_url }}", unsub_url).replace("{unsubscribe_url}", unsub_url)
+        unsub_tag = f'<a href="{unsub_url}" style="color: #4f46e5; text-decoration: underline;">Unsubscribe</a>'
+
+        # 1. Clean Markdown style [url](url) or [text](url) for unsubscribe links
+        html_content = re.sub(
+            r'\[([^\]]*)\]\((https?://[^\s\)]+emailMarketing/unsubscribe[^\s\)]*)\)',
+            r'<a href="\g<2>" style="color: #4f46e5; text-decoration: underline;">Unsubscribe</a>',
+            html_content,
+            flags=re.IGNORECASE
+        )
+
+        # 2. Clean <a href="...">https://...</a> where the inner text is the raw unsubscribe URL
+        html_content = re.sub(
+            r"""<a([^>]*?href=["'][^"']*emailMarketing/unsubscribe[^"']*["'][^>]*?)>\s*https?://[^\s<]+\s*</a>""",
+            rf'<a style="color: #4f46e5; text-decoration: underline;">Unsubscribe</a>',
+            html_content,
+            flags=re.IGNORECASE
+        )
+
+        # 3. If already inside href="...", replace with url; if standalone, replace with styled <a> tag
+        html_content = html_content.replace('href="{{ unsubscribe_url }}"', f'href="{unsub_url}"')
+        html_content = html_content.replace('href="{unsubscribe_url}"', f'href="{unsub_url}"')
+        html_content = html_content.replace("{{ unsubscribe_url }}", unsub_tag).replace("{unsubscribe_url}", unsub_tag)
+        html_content = html_content.replace("{{ unsubscribe_link }}", unsub_tag).replace("{unsubscribe_link}", unsub_tag)
+
+        # 4. Clean any leftover raw plain-text unsubscribe URLs
+        html_content = re.sub(
+            r"""(?<!href=["'])(https?://[^\s"'<]+emailMarketing/unsubscribe[^\s"'<]*)""",
+            unsub_tag,
+            html_content,
+            flags=re.IGNORECASE
+        )
 
         # Append execution_id parameter to all href links for Web Pixel attribution tracking
    
