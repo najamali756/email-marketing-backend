@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -20,13 +21,20 @@ class ClientContextMixin(AuthenticatedMixin):
             return None
 
         if not request.user or not request.user.is_authenticated:
-            # If request is not authenticated, check token auth
-            try:
-                auth_res = TokenAuthentication().authenticate(request)
-                if auth_res:
-                    request.user, request.auth = auth_res
-            except Exception:
-                pass
+            auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+            token_key = auth_header[6:].strip() if auth_header.startswith("Token ") else None
+            cached_auth = cache.get(f"auth_token_{token_key}") if token_key else None
+            if cached_auth:
+                request.user, request.auth = cached_auth
+            else:
+                try:
+                    auth_res = TokenAuthentication().authenticate(request)
+                    if auth_res:
+                        request.user, request.auth = auth_res
+                        if token_key:
+                            cache.set(f"auth_token_{token_key}", auth_res, 120)
+                except Exception:
+                    pass
 
         if not request.user or not request.user.is_authenticated:
             request.client = None
@@ -35,6 +43,15 @@ class ClientContextMixin(AuthenticatedMixin):
         user = request.user
         client_id = request.META.get("HTTP_X_CLIENT_ID") or request.query_params.get("client_id")
         from Accounts.models import Client, ClientUser
+
+        cache_key = f"auth_client_{user.id}_{client_id}"
+        try:
+            cached_client = cache.get(cache_key)
+            if cached_client is not None:
+                request.client = cached_client
+                return None
+        except Exception:
+            pass
 
         if user.is_staff or user.is_superuser:
             # Staff has access to any client
@@ -55,6 +72,10 @@ class ClientContextMixin(AuthenticatedMixin):
                 client = first_membership.client if first_membership else None
 
         request.client = client
+        try:
+            cache.set(cache_key, client, 120)
+        except Exception:
+            pass
         return None
 
 
@@ -73,6 +94,14 @@ class StoreContextMixin(ClientContextMixin):
         user = request.user
         from Accounts.models import Store
 
+        cache_key = f"auth_store_{user.id}_{request.client.id}_{store_id}"
+        try:
+            cached_store = cache.get(cache_key)
+            if cached_store is not None:
+                return cached_store
+        except Exception:
+            pass
+
         if user.is_staff or user.is_superuser or user.user_type == 'admin':
             # Staff/Admin has access to all active stores of their resolved client
             if store_id:
@@ -87,4 +116,8 @@ class StoreContextMixin(ClientContextMixin):
             else:
                 store = assigned.first()
 
+        try:
+            cache.set(cache_key, store, 120)
+        except Exception:
+            pass
         return store

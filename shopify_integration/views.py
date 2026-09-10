@@ -1,3 +1,4 @@
+import threading
 import requests
 import hmac
 import hashlib
@@ -267,17 +268,48 @@ class ShopifyCallbackView(APIView):
             return HttpResponse(f"An error occurred: {str(e)}", status=500)
 
 
+def _run_bulk_subscribe_thread(store_id, contact_ids):
+    from django.db import connection
+    connection.close()
+    try:
+        store = Store.objects.filter(id=store_id).first()
+        if not store:
+            return
+        # 1. Update local database contacts
+        qs = Contact.objects.filter(store=store)
+        if contact_ids:
+            qs = qs.filter(id__in=contact_ids)
+        qs.filter(accept_email_marketing=False).update(
+            accept_email_marketing=True,
+            accept_email_marketing_at=django_timezone.now(),
+            updated_at=django_timezone.now()
+        )
+        # 2. Sync to Shopify API
+        bulk_subscribe_all_shopify(store, contact_ids)
+    except Exception as exc:
+        logger.error(f"[ASYNC SUBSCRIBE ALL] Error for store {store_id}: {exc}")
+
+
 class ShopifySubscribeAllView(StoreAuthenticatedMixin, APIView):
     """
-    API view to subscribe all contacts of the active store and sync each directly to Shopify API.
+    API view to subscribe all contacts of the active store and sync each directly to Shopify API asynchronously in background thread.
     """
     def post(self, request):
         contact_ids = request.data.get("contact_ids")
-        updated_count = bulk_subscribe_all_shopify(request.store, contact_ids)
+        store = request.store
+
+        # Launch async task in background thread immediately
+        thread = threading.Thread(
+            target=_run_bulk_subscribe_thread,
+            args=(store.id, contact_ids),
+            daemon=True
+        )
+        thread.start()
+
         return Response({
-            "message": f"Successfully subscribed {updated_count} contacts and synced with Shopify API.",
-            "updated_count": updated_count
-        })
+            "message": "Subscribe all request send to shopify",
+            "status": "processing"
+        }, status=status.HTTP_200_OK)
 
 
 class ShopifySyncTriggerView(StoreAuthenticatedMixin, APIView):

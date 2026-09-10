@@ -18,6 +18,16 @@ class EmailProvider:
     def __init__(self, store: Store):
         self.store = store
 
+    def _connect_smtp(self, host, port, use_ssl, use_tls):
+        """Helper to establish SMTP connection with SSL/TLS."""
+        if port == 465 or use_ssl:
+            server = smtplib.SMTP_SSL(host, port, timeout=15)
+        else:
+            server = smtplib.SMTP(host, port, timeout=15)
+            if use_tls:
+                server.starttls(context=ssl.create_default_context())
+        return server
+
     def send(self, to_email, subject, html_body, from_name=None, unsubscribe_url=None):
         # 1. Resolve from_email and reply_to based on StoreSenderIdentity
         identity = StoreSenderIdentity.objects.filter(store=self.store, is_active=True).first()
@@ -48,8 +58,10 @@ class EmailProvider:
             from_email = f"noreply@{platform_domain}"
 
         # 2. Get SMTP settings
-        host = getattr(settings, "EMAIL_HOST", "smtp.sendgrid.net")
-        port = int(getattr(settings, "EMAIL_PORT", 587))
+        host = getattr(settings, "EMAIL_HOST", "email-smtp.eu-north-1.amazonaws.com")
+        port = int(getattr(settings, "EMAIL_PORT", 465))
+        use_ssl = getattr(settings, "EMAIL_USE_SSL", True if port == 465 else False)
+        use_tls = getattr(settings, "EMAIL_USE_TLS", True if port != 465 else False)
         username = getattr(settings, "EMAIL_HOST_USER", "apikey")
         password = getattr(settings, "EMAIL_HOST_PASSWORD", "")
 
@@ -73,15 +85,32 @@ class EmailProvider:
 
         message.attach(MIMEText(html_body or "", "html", "utf-8"))
 
-        # 4. Connect and send email via SMTP server
-        try:
-            if port == 465:
-                server = smtplib.SMTP_SSL(host, port, timeout=15)
-            else:
-                server = smtplib.SMTP(host, port, timeout=15)
-                if getattr(settings, "EMAIL_USE_TLS", True):
-                    server.starttls(context=ssl.create_default_context())
+        # 4. Connect and send email via SMTP server (with automatic fallback if port is blocked by ISP)
+        connection_attempts = [
+            (port, use_ssl, use_tls),
+        ]
+        if port != 465:
+            connection_attempts.append((465, True, False))
+        if port != 2587:
+            connection_attempts.append((2587, False, True))
 
+        last_conn_exc = None
+        server = None
+        for try_port, try_ssl, try_tls in connection_attempts:
+            try:
+                server = self._connect_smtp(host, try_port, try_ssl, try_tls)
+                port = try_port
+                break
+            except Exception as conn_err:
+                logger.warning(f"[EMAIL PROVIDER] Connection failed on {host}:{try_port}: {conn_err}. Trying fallback port...")
+                last_conn_exc = conn_err
+
+        if server is None:
+            err_msg = f"Email delivery connection failed to {host}: {last_conn_exc}"
+            logger.error(f"[EMAIL PROVIDER ERROR] {err_msg}")
+            raise ValueError(err_msg)
+
+        try:
             if username and password:
                 logger.info(f"[EMAIL PROVIDER] Connecting to {host}:{port} with user: {username}")
                 logger.info(f"[EMAIL PROVIDER] Sending from '{from_name}' <{from_email}> to <{to_email}>")

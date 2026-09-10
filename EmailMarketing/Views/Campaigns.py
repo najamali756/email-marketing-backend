@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from rest_framework import status
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView
 from rest_framework.response import Response
@@ -9,6 +10,7 @@ from EmailMarketing.Serializer.CampaignSerializer import (
     CampaignRecipientSerializer,
     EmailCampaignCreateSerializer,
     EmailCampaignSerializer,
+    EmailCampaignListSerializer,
     SendCampaignSerializer,
 )
 from EmailMarketing.Views.base import StoreAuthenticatedMixin
@@ -23,19 +25,163 @@ from EmailMarketing.models import EmailRecipientStatusEnum
 from Accounts.models import Contact
 
 logger = logging.getLogger(__name__)
+def get_campaign_cache_version(store_id):
+    try:
+        return cache.get(f"camp_ver_{store_id}", 1)
+    except Exception:
+        return 1
+
+def invalidate_campaign_cache(store_id):
+    try:
+        cache.incr(f"camp_ver_{store_id}")
+    except Exception:
+        try:
+            cache.set(f"camp_ver_{store_id}", 2)
+        except Exception:
+            pass
+
 class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
     def get_serializer_class(self):
         if self.request.method == "POST":
             return EmailCampaignCreateSerializer
-        return EmailCampaignSerializer
+        return EmailCampaignListSerializer
 
     def get_queryset(self):
-        return EmailCampaign.objects.filter(store=self.request.store).order_by("-created_at")
+        return EmailCampaign.objects.filter(store=self.request.store).select_related("segment").order_by("-created_at")
 
     def perform_create(self, serializer):
         serializer.save(store=self.request.store, status=EmailCampaignStatusEnum.draft.value)
+        invalidate_campaign_cache(self.request.store.id)
+
+    def get(self, request, *args, **kwargs):
+        store_id = request.META.get("HTTP_X_STORE_ID") or request.GET.get("store_id")
+        if not store_id:
+            return Response(
+                {"detail": "Store ID is required in headers (X-Store-Id) or query parameters.", "count": 0, "total_pages": 1, "current_page": 1, "page_size": 10, "results": []},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        store = request.store
+        if not store:
+            return Response(
+                {"detail": "Store context not found or access denied.", "count": 0, "total_pages": 1, "current_page": 1, "page_size": 10, "results": []},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Server-side pagination parameters (initial count / page_size = 10)
+        try:
+            page = int(request.GET.get("page", 1))
+        except (ValueError, TypeError):
+            page = 1
+
+        try:
+            page_size = int(request.GET.get("page_size", 10))
+        except (ValueError, TypeError):
+            page_size = 10
+
+        search = request.GET.get("search", "").strip()
+        status_param = request.GET.get("status", "").strip()
+        type_param = request.GET.get("campaign_type", "").strip() or request.GET.get("type", "").strip()
+
+        # Cache check for sub-10ms response
+        ver = get_campaign_cache_version(store.id)
+        cache_key = f"camp_list_response_v2_{store.id}_v{ver}_{page}_{page_size}_{search}_{status_param}_{type_param}"
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return Response(cached_data)
+
+        # Ultra-fast single query with select_related and only required columns
+        qs = EmailCampaign.objects.filter(store=store).select_related("segment").only(
+            "id", "name", "subject", "preview_text", "status", "campaign_type",
+            "scheduled_at", "sent_at", "total_recipients", "sent_count",
+            "failed_count", "skipped_count", "open_count", "click_count",
+            "revenue", "orders_count", "wizard_step", "created_at", "updated_at",
+            "segment__name", "segment__id"
+        ).order_by("-created_at")
+
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(subject__icontains=search))
+
+        if status_param and status_param.lower() != "all":
+            qs = qs.filter(status__iexact=status_param)
+
+        if type_param and type_param.lower() != "all":
+            qs = qs.filter(campaign_type__iexact=type_param)
+
+        total_count = qs.count()
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
+        if page < 1:
+            page = 1
+
+        offset = (page - 1) * page_size
+        page_items = list(qs[offset:offset + page_size])
+
+        serializer = EmailCampaignListSerializer(page_items, many=True)
+        response_data = {
+            "count": total_count,
+            "total_pages": total_pages,
+            "current_page": page,
+            "page_size": page_size,
+            "results": serializer.data,
+        }
+
+        # Cache for 30s
+        cache.set(cache_key, response_data, 30)
+        return Response(response_data)
 
 
+class EmailCampaignStatsView(StoreAuthenticatedMixin, APIView):
+    def get(self, request):
+        store_id = request.META.get("HTTP_X_STORE_ID") or request.GET.get("store_id")
+        if not store_id:
+            return Response(
+                {"detail": "Store ID is required in headers (X-Store-Id) or query parameters.", "total": 0, "sent": 0, "scheduled": 0, "drafts": 0, "stats": {}},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        store = request.store
+        if not store:
+            return Response(
+                {"detail": "Store context not found or access denied.", "total": 0, "sent": 0, "scheduled": 0, "drafts": 0, "stats": {}},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        ver = get_campaign_cache_version(store.id)
+        cache_key = f"camp_stats_{store.id}_v{ver}"
+        cached_stats = cache.get(cache_key)
+        if cached_stats is not None:
+            return Response(cached_stats)
+
+        from django.db.models import Count, Case, When, IntegerField, Sum
+        base_qs = EmailCampaign.objects.filter(store=store)
+        agg = base_qs.aggregate(
+            total=Count("id"),
+            sent=Count(Case(When(status__in=[EmailCampaignStatusEnum.sent.value, EmailCampaignStatusEnum.sending.value, "Sent", "Sending"], then=1), output_field=IntegerField())),
+            scheduled=Count(Case(When(status__in=[EmailCampaignStatusEnum.scheduled.value, "Scheduled"], then=1), output_field=IntegerField())),
+            drafts=Count(Case(When(status__in=[EmailCampaignStatusEnum.draft.value, "Draft"], then=1), output_field=IntegerField())),
+            cancelled=Count(Case(When(status__in=[EmailCampaignStatusEnum.cancelled.value, "Cancelled"], then=1), output_field=IntegerField())),
+            failed=Count(Case(When(status__in=[EmailCampaignStatusEnum.failed.value, "Failed"], then=1), output_field=IntegerField())),
+            total_revenue=Sum("revenue"),
+            total_sent=Sum("sent_count"),
+            total_opened=Sum("open_count"),
+            total_clicked=Sum("click_count"),
+        )
+        stats_payload = {
+            "total": agg["total"] or 0,
+            "sent": agg["sent"] or 0,
+            "scheduled": agg["scheduled"] or 0,
+            "drafts": agg["drafts"] or 0,
+            "cancelled": agg["cancelled"] or 0,
+            "failed": agg["failed"] or 0,
+            "total_revenue": float(agg["total_revenue"] or 0),
+            "total_sent": agg["total_sent"] or 0,
+            "total_opened": agg["total_opened"] or 0,
+            "total_clicked": agg["total_clicked"] or 0,
+        }
+        res_data = dict(stats_payload)
+        res_data["stats"] = stats_payload
+        cache.set(cache_key, res_data, 60)
+        return Response(res_data)
 
 
 def recalculate_campaign_stats(campaign):

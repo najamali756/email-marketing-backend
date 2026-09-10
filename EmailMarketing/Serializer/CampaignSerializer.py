@@ -3,6 +3,33 @@ from rest_framework import serializers
 from EmailMarketing.models import EmailCampaign, EmailCampaignRecipient
 
 
+class EmailCampaignListSerializer(serializers.ModelSerializer):
+    open_rate = serializers.SerializerMethodField()
+    click_rate = serializers.SerializerMethodField()
+    conversion_rate = serializers.SerializerMethodField()
+    audience_name = serializers.CharField(source="segment.name", read_only=True, default=None)
+
+    class Meta:
+        model = EmailCampaign
+        fields = (
+            "id", "name", "subject", "preview_text", "status", "campaign_type",
+            "scheduled_at", "sent_at", "total_recipients",
+            "sent_count", "failed_count", "skipped_count",
+            "open_count", "click_count", "revenue",
+            "open_rate", "click_rate", "conversion_rate",
+            "audience_name", "wizard_step", "created_at", "updated_at",
+        )
+        read_only_fields = fields
+
+    def get_open_rate(self, obj):
+        return round((obj.open_count / obj.sent_count) * 100, 1) if obj.sent_count else 0
+
+    def get_click_rate(self, obj):
+        return round((obj.click_count / obj.sent_count) * 100, 1) if obj.sent_count else 0
+
+    def get_conversion_rate(self, obj):
+        return round((obj.orders_count / obj.sent_count) * 100, 1) if obj.sent_count else 0
+
 class EmailCampaignSerializer(serializers.ModelSerializer):
     open_rate = serializers.SerializerMethodField()
     click_rate = serializers.SerializerMethodField()

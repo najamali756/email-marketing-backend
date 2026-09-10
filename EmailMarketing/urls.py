@@ -1,6 +1,6 @@
 from django.urls import re_path as url
 
-from EmailMarketing.Views.Audiences import AudienceEstimateView, EmailSegmentListCreateView
+from EmailMarketing.Views.Audiences import AudienceEstimateView, EmailSegmentListCreateView, EmailSegmentDetailView
 from EmailMarketing.Views.BrandSettings import EmailBrandSettingsView
 from EmailMarketing.Views.Campaigns import (
     BuildCampaignAudienceView,
@@ -13,6 +13,7 @@ from EmailMarketing.Views.Campaigns import (
     ResumeCampaignView,
     CancelCampaignView,
     RecalculateCampaignStatsView,
+    EmailCampaignStatsView,
 )
 from EmailMarketing.Views.Templates import EmailTemplateDetailView, EmailTemplateListCreateView
 from EmailMarketing.Views.Media import EmailTemplateMediaListView, EmailTemplateMediaDetailView
@@ -29,8 +30,10 @@ urlpatterns = [
     url(r"^templates/media$", EmailTemplateMediaListView.as_view()),
     url(r"^templates/media/(?P<pk>\d+)$", EmailTemplateMediaDetailView.as_view()),
     url(r"^segments$", EmailSegmentListCreateView.as_view()),
+    url(r"^segments/(?P<pk>\d+)$", EmailSegmentDetailView.as_view()),
     url(r"^audiences/estimate$", AudienceEstimateView.as_view()),
     url(r"^campaigns$", EmailCampaignListCreateView.as_view()),
+    url(r"^campaigns/stats$", EmailCampaignStatsView.as_view()),
     url(r"^campaigns/(?P<pk>\d+)$", EmailCampaignDetailView.as_view()),
     url(r"^campaigns/(?P<campaign_id>\d+)/buildAudience$", BuildCampaignAudienceView.as_view()),
     url(r"^campaigns/(?P<campaign_id>\d+)/send$", SendCampaignView.as_view()),

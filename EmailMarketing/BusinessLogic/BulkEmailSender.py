@@ -143,6 +143,10 @@ class BulkEmailSender:
                     },
                 )
                 body = TemplateRenderer.render(html_template, context)
+                raw_preview_text = campaign.preview_text or (campaign.template.preview_text if campaign.template else "")
+                rendered_preview = TemplateRenderer.render(raw_preview_text, context)
+                if rendered_preview:
+                    body = TemplateRenderer.inject_preview_text(body, rendered_preview)
                 body = self._instrument_html_body(body, recipient)
                 subject = TemplateRenderer.render(campaign.subject, context)
                 from_name = campaign.from_name or (brand_settings.default_from_name if brand_settings else None)
@@ -305,9 +309,15 @@ class BulkEmailSender:
             "unsubscribe_url": "#",
             **(personalization or {})
         }
+        html_body = TemplateRenderer.render(html_template, context)
+        raw_preview_text = campaign.preview_text or (campaign.template.preview_text if campaign.template else "")
+        rendered_preview = TemplateRenderer.render(raw_preview_text, context)
+        if rendered_preview:
+            html_body = TemplateRenderer.inject_preview_text(html_body, rendered_preview)
+
         provider.send(
             to_email=to_email,
             subject=TemplateRenderer.render(campaign.subject, context),
-            html_body=TemplateRenderer.render(html_template, context),
+            html_body=html_body,
             from_name=campaign.from_name,
         )

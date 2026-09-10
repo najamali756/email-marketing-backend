@@ -137,9 +137,10 @@ EMAIL_MARKETING_PUBLIC_URL = os.environ.get("EMAIL_MARKETING_PUBLIC_URL", "https
 
 # AWS SES Global SMTP & API Settings
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST ="email-smtp.eu-north-1.amazonaws.com"
-EMAIL_PORT = 587
-EMAIL_USE_TLS = "True"
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "email-smtp.eu-north-1.amazonaws.com")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 465))
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "True") == "True"
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "False") == "True"
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "dummy")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "dummy")
 
