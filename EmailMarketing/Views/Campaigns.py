@@ -23,6 +23,7 @@ from EmailMarketing.BusinessLogic.TemplateRenderer import TemplateRenderer
 from django.db.models import Q, Sum
 from EmailMarketing.models import EmailRecipientStatusEnum
 from Accounts.models import Contact
+from shopify_integration.sync import fetch_and_save_store_currency
 
 logger = logging.getLogger(__name__)
 def get_campaign_cache_version(store_id):
@@ -122,6 +123,8 @@ class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
             "total_pages": total_pages,
             "current_page": page,
             "page_size": page_size,
+            "currency": getattr(store, "store_currency", None) or "PKR",
+            "store_currency": getattr(store, "store_currency", None) or "PKR",
             "results": serializer.data,
         }
 
@@ -166,6 +169,9 @@ class EmailCampaignStatsView(StoreAuthenticatedMixin, APIView):
             total_opened=Sum("open_count"),
             total_clicked=Sum("click_count"),
         )
+       
+        store_currency = fetch_and_save_store_currency(store)
+
         stats_payload = {
             "total": agg["total"] or 0,
             "sent": agg["sent"] or 0,
@@ -177,8 +183,12 @@ class EmailCampaignStatsView(StoreAuthenticatedMixin, APIView):
             "total_sent": agg["total_sent"] or 0,
             "total_opened": agg["total_opened"] or 0,
             "total_clicked": agg["total_clicked"] or 0,
+            "currency": store_currency,
+            "store_currency": store_currency,
         }
         res_data = dict(stats_payload)
+        res_data["currency"] = store_currency
+        res_data["store_currency"] = store_currency
         res_data["stats"] = stats_payload
         cache.set(cache_key, res_data, 60)
         return Response(res_data)

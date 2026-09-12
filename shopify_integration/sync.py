@@ -567,3 +567,50 @@ def bulk_update_marketing_consent_shopify(store, accepts_marketing=True, contact
 
 def bulk_subscribe_all_shopify(store, contact_ids=None):
     return bulk_update_marketing_consent_shopify(store, accepts_marketing=True, contact_ids=contact_ids)
+
+
+def fetch_and_save_store_currency(store):
+    """
+    Fetches the store's default currency from Shopify Admin API (/admin/api/2023-04/shop.json)
+    if store.store_currency is null or empty, saves it on store, and returns the currency code.
+    If store.store_currency is already populated, returns it immediately.
+    """
+    if not store:
+        return "USD"
+
+    current_currency = getattr(store, "store_currency", None)
+    if current_currency and str(current_currency).strip():
+        return str(current_currency).strip()
+
+    settings_obj = ShopifySettings.objects.filter(store=store).first()
+    if not settings_obj or not settings_obj.shop_url:
+        return "USD"
+
+    active_token = get_valid_shopify_token(store) or settings_obj.shopify_access_token
+    if not active_token:
+        logger.warning(f"[SHOPIFY CURRENCY] No active token for store '{store.name}' ({settings_obj.shop_url})")
+        return "USD"
+
+    url = f"https://{settings_obj.shop_url}/admin/api/2023-04/shop.json"
+    headers = {
+        "X-Shopify-Access-Token": active_token,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = shopify_api_request("get", url, store, headers=headers, timeout=10)
+        if response.status_code == 200:
+            shop_data = response.json().get("shop", {})
+            currency = shop_data.get("currency")
+            if currency:
+                currency = str(currency).strip()
+                store.store_currency = currency
+                store.save(update_fields=["store_currency", "updated_at"])
+                logger.info(f"[SHOPIFY CURRENCY] Fetched and saved currency '{currency}' for store '{store.name}'")
+                return currency
+        else:
+            logger.error(f"[SHOPIFY CURRENCY] Failed to fetch shop.json for {settings_obj.shop_url} ({response.status_code}): {response.text}")
+    except Exception as e:
+        logger.error(f"[SHOPIFY CURRENCY] Exception fetching currency for {settings_obj.shop_url}: {str(e)}")
+
+    return "USD"

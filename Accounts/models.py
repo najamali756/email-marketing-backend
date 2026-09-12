@@ -37,6 +37,7 @@ class Store(TimeStampedModel):
     email_provider = models.CharField(max_length=50, default="sendgrid")
     default_from_email = models.EmailField(blank=True, null=True)
     default_from_name = models.CharField(max_length=255, blank=True, null=True)
+    store_currency = models.CharField(max_length=20, blank=True, null=True)
 
     class Meta:
         indexes = [
