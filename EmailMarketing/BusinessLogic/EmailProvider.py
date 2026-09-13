@@ -35,7 +35,7 @@ class EmailProvider:
         from_name = from_name or (identity.brand_name if identity and identity.brand_name else self.store.default_from_name or self.store.name)
         
         # Determine from_email depending on the mode
-        platform_domain = getattr(settings, "SENDGRID_PLATFORM_DOMAIN", "ntechgreenbridge.com")
+        platform_domain = getattr(settings, "SENDGRID_PLATFORM_DOMAIN", "technogroves.com")
         if identity:
             if identity.mode == "platform_domain":
                 brand_slug = slugify(identity.brand_name or self.store.name)

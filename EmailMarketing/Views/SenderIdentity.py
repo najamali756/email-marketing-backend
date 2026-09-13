@@ -51,7 +51,7 @@ class StoreSenderIdentityView(StoreAuthenticatedMixin, APIView):
         request.store.default_from_email = reply_to_email
         request.store.save()
 
-        platform_domain = getattr(settings, "SENDGRID_PLATFORM_DOMAIN", "ntechgreenbridge.com")
+        platform_domain = getattr(settings, "SENDGRID_PLATFORM_DOMAIN", "technogroves.com")
 
         if mode == "platform_domain":
             brand_slug = slugify(brand_name)

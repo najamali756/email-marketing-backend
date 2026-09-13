@@ -149,7 +149,7 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 AWS_SES_REGION_NAME = os.environ.get("AWS_SES_REGION_NAME", "us-east-1")
 
 # The platform domain name for email routing fallbacks
-SENDGRID_PLATFORM_DOMAIN = os.environ.get("SENDGRID_PLATFORM_DOMAIN", "ntechgreenbridge.com")
+SENDGRID_PLATFORM_DOMAIN = os.environ.get("SENDGRID_PLATFORM_DOMAIN", "technogroves.com")
 
 # Shopify Integration Settings
 SHOPIFY_API_KEY = os.environ.get("SHOPIFY_API_KEY", "")
