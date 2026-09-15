@@ -25,6 +25,10 @@ from shopify_integration.sync import (
     sync_single_segment,
     sync_segments,
 )
+from datetime import timedelta
+from django.db import connection
+from EmailMarketing.models import EmailSegment
+from EmailMarketing.Serializer.AudienceSerializer import EmailSegmentSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +39,6 @@ def clean_domain(domain):
     url_str = str(domain).strip().lower()
     url_str = url_str.replace("https://", "").replace("http://", "")
     
-    # Handle admin.shopify.com/store/store-name URLs
     if "admin.shopify.com/store/" in url_str:
         store_name = url_str.split("admin.shopify.com/store/")[1].split("/")[0].split("?")[0].strip()
         return f"{store_name}.myshopify.com"
@@ -70,7 +73,6 @@ class ShopifySettingsView(StoreAuthenticatedMixin, APIView):
             
         clean_host = clean_domain(shop_url)
         
-        # Get or create setting mapping
         settings_obj, created = ShopifySettings.objects.get_or_create(
             store=request.store,
             defaults={"shop_url": clean_host}
@@ -88,11 +90,9 @@ class ShopifySettingsView(StoreAuthenticatedMixin, APIView):
             
         settings_obj.save()
         
-        # Automatically sync store's shop_url field
         request.store.shop_url = clean_host
         request.store.save()
         
-        # Trigger background customer sync if token exists
         if settings_obj.shopify_access_token:
             sync_customers_in_background(settings_obj.shop_url, settings_obj.shopify_access_token, request.store)
             
@@ -114,14 +114,12 @@ class ShopifyInstallView(APIView):
             
         clean_host = clean_domain(shop)
         
-        # Check if shop is already authenticated
         settings_obj = ShopifySettings.objects.filter(shop_url=clean_host).first()
         frontend_url = getattr(settings_conf, "SHOPIFY_SITE_URL", "https://marketing.technogroves.com")
         if settings_obj and settings_obj.shopify_access_token:
             print(f"[SHOPIFY INSTALL] Shop '{clean_host}' is already authenticated. Redirecting to App UI.")
             return redirect(frontend_url)
         
-        # Try to resolve the store by store_id parameter from the frontend first
         store_id = request.GET.get("store_id")
         store = None
         if store_id:
@@ -130,12 +128,10 @@ class ShopifyInstallView(APIView):
             except ValueError:
                 pass
                 
-        # If not provided or invalid, resolve by shop_url domain mapping
         if not store:
             store = Store.objects.filter(shop_url=clean_host).first()
             
         if not store:
-            # Create a Store automatically for new Shopify merchants / reviewer test stores
             default_client, _ = Client.objects.get_or_create(
                 name="Shopify Merchants",
                 defaults={"is_active": True}
@@ -149,18 +145,15 @@ class ShopifyInstallView(APIView):
                 }
             )
         
-        # Retrieve credentials (custom app or default global fallback)
         store_settings = getattr(store, "shopify_settings", None) or settings_obj
         api_key = store_settings.get_api_key() if store_settings else getattr(settings_conf, "SHOPIFY_API_KEY", "")
         scopes = getattr(settings_conf, "SHOPIFY_APP_API_SCOPE", "read_customers,write_customers")
         
-        # Build redirect URL
         public_url = getattr(settings_conf, "EMAIL_MARKETING_PUBLIC_URL", "")
         if not public_url:
             public_url = f"{request.scheme}://{request.get_host()}"
         redirect_uri = f"{public_url.rstrip('/')}/shopify/callback/"
         
-        # Use state to securely pass the Store ID to mapping function in callback
         state = str(store.id)
         
         auth_url = (
@@ -191,25 +184,20 @@ class ShopifyCallbackView(APIView):
             
         clean_host = clean_domain(shop)
         
-        # Retrieve the installing Store using state parameter
         try:
             store = Store.objects.get(id=int(state))
         except (ValueError, Store.DoesNotExist):
             return HttpResponse("Invalid state parameter: store not found", status=400)
             
-        # Retrieve credentials (custom app or default global fallback)
         store_settings = ShopifySettings.objects.filter(store=store).first()
         api_key = store_settings.get_api_key() if store_settings else getattr(settings_conf, "SHOPIFY_API_KEY", "")
         api_secret = store_settings.get_api_secret() if store_settings else getattr(settings_conf, "SHOPIFY_API_SECRET", "")
         
-        # Step 4: Request an expiring offline access token.
         exchange_url = f"https://{clean_host}/admin/oauth/access_token"
         payload = {
             "client_id": api_key,
             "client_secret": api_secret,
             "code": code,
-            # Shopify only returns refresh_token/expires_in for an expiring
-            # offline token. Offline is selected by omitting per-user.
             "expiring": "1",
         }
         
@@ -228,10 +216,8 @@ class ShopifyCallbackView(APIView):
             if not access_token:
                 return HttpResponse("Access token not found in response", status=400)
                 
-            # Clean up existing records to prevent OneToOne database conflicts for this store
             ShopifySettings.objects.filter(store=store).exclude(shop_url=clean_host).delete()
             
-            # Map token to the store
             shopify_settings, _ = ShopifySettings.objects.get_or_create(
                 store=store,
                 defaults={"shop_url": clean_host}
@@ -239,14 +225,10 @@ class ShopifyCallbackView(APIView):
             shopify_settings.shopify_access_token = access_token
             shopify_settings.shop_url = clean_host
             
-            # Expiring offline exchanges return both values. Do not manufacture
-            # an expiry when Shopify returns a non-expiring token.
             refresh_token = response_json.get("refresh_token")
             expires_in = response_json.get("expires_in")
             shopify_settings.shopify_refresh_token = refresh_token
 
-            from django.utils import timezone as django_timezone
-            from datetime import timedelta
             shopify_settings.shopify_token_expires_at = (
                 django_timezone.now() + timedelta(seconds=int(expires_in))
                 if expires_in is not None
@@ -254,14 +236,11 @@ class ShopifyCallbackView(APIView):
             )
             shopify_settings.save()
             
-            # Update store's shop_url field
             store.shop_url = clean_host
             store.save()
             
-            # Trigger sync
             sync_customers_in_background(clean_host, access_token, store)
             
-            # Redirect back to the frontend Settings > Integrations tab
             frontend_url = getattr(settings_conf, "SHOPIFY_SITE_URL", "https://marketing.technogroves.com")
             return redirect(f"{frontend_url.rstrip('/')}/settings?tab=Integrations&status=success")
         except Exception as e:
@@ -269,13 +248,11 @@ class ShopifyCallbackView(APIView):
 
 
 def _run_bulk_subscribe_thread(store_id, contact_ids):
-    from django.db import connection
     connection.close()
     try:
         store = Store.objects.filter(id=store_id).first()
         if not store:
             return
-        # 1. Update local database contacts
         qs = Contact.objects.filter(store=store)
         if contact_ids:
             qs = qs.filter(id__in=contact_ids)
@@ -284,7 +261,6 @@ def _run_bulk_subscribe_thread(store_id, contact_ids):
             accept_email_marketing_at=django_timezone.now(),
             updated_at=django_timezone.now()
         )
-        # 2. Sync to Shopify API
         bulk_subscribe_all_shopify(store, contact_ids)
     except Exception as exc:
         logger.error(f"[ASYNC SUBSCRIBE ALL] Error for store {store_id}: {exc}")
@@ -298,7 +274,6 @@ class ShopifySubscribeAllView(StoreAuthenticatedMixin, APIView):
         contact_ids = request.data.get("contact_ids")
         store = request.store
 
-        # Launch async task in background thread immediately
         thread = threading.Thread(
             target=_run_bulk_subscribe_thread,
             args=(store.id, contact_ids),
@@ -397,10 +372,8 @@ class ShopifySegmentCreateView(StoreAuthenticatedMixin, APIView):
         if not settings_obj or not settings_obj.shopify_access_token:
             return Response({"error": "No Shopify integration configured for this store yet."}, status=status.HTTP_400_BAD_REQUEST)
             
-        # Get valid rotated token
         active_token = get_valid_shopify_token(request.store) or settings_obj.shopify_access_token
         
-        # Shopify GraphQL Segment Create mutation
         url = f"https://{settings_obj.shop_url}/admin/api/2023-04/graphql.json"
         headers = {
             "X-Shopify-Access-Token": active_token,
@@ -453,9 +426,6 @@ class ShopifySegmentCreateView(StoreAuthenticatedMixin, APIView):
             segment_name = segment_node.get("name")
             segment_query = segment_node.get("query")
             
-            # Save locally
-            from EmailMarketing.models import EmailSegment
-            from EmailMarketing.Serializer.AudienceSerializer import EmailSegmentSerializer
             
             local_segment = EmailSegment.objects.create(
                 store=request.store,
@@ -503,7 +473,6 @@ def verify_shopify_hmac(request):
         print("[SHOPIFY WEBHOOK] Warning: SHOPIFY_API_SECRET is not configured in model or Django settings!")
         return False
 
-    # Get raw body bytes (supports both DRF Request and standard Django HttpRequest)
     raw_body = getattr(request, "_request", request).body
 
     digest = hmac.new(
@@ -531,7 +500,6 @@ class ShopifyWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
-        # 1. HMAC Signature Verification
         if not verify_shopify_hmac(request):
             print("[SHOPIFY WEBHOOK] HMAC Signature verification failed!")
             return Response({"error": "Invalid HMAC signature"}, status=status.HTTP_401_UNAUTHORIZED)

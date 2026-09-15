@@ -60,7 +60,6 @@ class LoginView(APIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
 
-        # If user is staff/admin/operator, return user_type and accessible clients/stores list
         user_type = "staff" if (user.is_staff or user.is_superuser) else user.user_type
         
         return Response({
@@ -96,7 +95,6 @@ class MeView(APIView):
         })
 
 
-# Client Management endpoints (Staff only)
 class ClientListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -142,7 +140,6 @@ class ClientDetailView(APIView):
         return Response({"detail": "Client deleted."}, status=status.HTTP_204_NO_CONTENT)
 
 
-# User Management endpoints (Admin / Staff)
 class UserListCreateView(ClientContextMixin, APIView):
     permission_classes = [IsAuthenticated, IsClientAdmin]
 
@@ -174,7 +171,6 @@ class UserDetailView(ClientContextMixin, APIView):
         serializer.is_valid(raise_exception=True)
         edited_user = serializer.save()
 
-        # Update password directly if provided
         password = request.data.get("password")
         if password:
             edited_user.set_password(password)
@@ -194,7 +190,6 @@ class UserDetailView(ClientContextMixin, APIView):
         return Response({"detail": "User deleted."}, status=status.HTTP_204_NO_CONTENT)
 
 
-# Store / Shop Management (Consolidated from Stores app)
 class StoreListCreateView(ClientContextMixin, ListCreateAPIView):
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -205,7 +200,6 @@ class StoreListCreateView(ClientContextMixin, ListCreateAPIView):
         return Store.objects.filter(client=self.request.client, is_active=True).order_by("-created_at")
 
     def get_permissions(self):
-        # Allow client admins/staff to create shops
         if self.request.method == "POST":
             return [IsAuthenticated(), IsClientAdmin()]
         return [IsAuthenticated()]
@@ -226,14 +220,12 @@ class StoreDetailView(ClientContextMixin, RetrieveUpdateDestroyAPIView):
         return [IsAuthenticated()]
 
 
-# Contacts & Synchronization (Consolidated from Stores app)
 class ContactListCreateView(StoreContextMixin, APIView):
     permission_classes = [HasStoreContext]
 
     def get(self, request):
         qs = Contact.objects.filter(store=request.store).order_by("-created_at")
 
-        # 1. Server-side Search
         search = request.GET.get("search", "").strip()
         if search:
             qs = qs.filter(
@@ -245,14 +237,12 @@ class ContactListCreateView(StoreContextMixin, APIView):
                 Q(country__icontains=search)
             )
 
-        # 2. Server-side Status Filter (subscribed / unsubscribed)
         status_param = request.GET.get("status", "").strip().lower()
         if status_param == "subscribed":
             qs = qs.filter(accept_email_marketing=True)
         elif status_param == "unsubscribed":
             qs = qs.filter(accept_email_marketing=False)
 
-        # 3. Server-side Segment Filter
         segment_id_param = request.GET.get("segment_id", "").strip()
         if segment_id_param:
 
@@ -263,7 +253,6 @@ class ContactListCreateView(StoreContextMixin, APIView):
                 resolved_qs = AudienceResolver(request.store).resolve(filter_config)
                 qs = qs.filter(Q(id__in=resolved_qs.values("id")) | Q(segments=segment_obj) | Q(email__in=member_emails)).distinct()
 
-        # 4. Server-side Pagination
         try:
             page = int(request.GET.get("page", 1))
         except ValueError:

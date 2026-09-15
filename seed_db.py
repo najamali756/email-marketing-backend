@@ -15,12 +15,10 @@ User = get_user_model()
 def seed():
     print("Seeding database...")
 
-    # 1. Create Clients
     client_a, _ = Client.objects.get_or_create(name="Client A", defaults={"is_active": True})
     client_b, _ = Client.objects.get_or_create(name="Client B", defaults={"is_active": True})
     print("Created Clients: Client A, Client B")
 
-    # 2. Create Staff User
     staff = User.objects.filter(email="staff@example.com").first()
     if not staff:
         staff = User.objects.create_superuser(
@@ -35,7 +33,6 @@ def seed():
     Token.objects.get_or_create(user=staff)
     print("Created Staff User: staff@example.com / admin123")
 
-    # 3. Create Admin User
     admin_user = User.objects.filter(email="admin@example.com").first()
     if not admin_user:
         admin_user = User.objects.create_user(
@@ -53,7 +50,6 @@ def seed():
     ClientUser.objects.get_or_create(user=admin_user, client=client_a, defaults={"role": UserRoleEnum.admin.value})
     print("Created Admin User: admin@example.com / admin123 (linked to Client A)")
 
-    # 4. Create Operator User
     operator_user = User.objects.filter(email="operator@example.com").first()
     if not operator_user:
         operator_user = User.objects.create_user(
@@ -71,7 +67,6 @@ def seed():
     ClientUser.objects.get_or_create(user=operator_user, client=client_a, defaults={"role": UserRoleEnum.member.value})
     print("Created Operator User: operator@example.com / admin123 (linked to Client A)")
 
-    # 5. Create Stores/Shops
     store_alpha, _ = Store.objects.get_or_create(
         client=client_a,
         shop_url="store-alpha.myshopify.com",
@@ -96,11 +91,9 @@ def seed():
     )
     print("Created Stores: Store Alpha, Store Beta under Client A")
 
-    # 6. Assign Store Alpha to Operator
     operator_user.assigned_stores.set([store_alpha])
     print("Assigned Store Alpha to Operator User")
 
-    # 7. Create Default Segments & Import Contacts for both stores
     segments_to_create = [
         {"name": "All Subscribers", "filter_config": {}},
         {"name": "VIP Customers", "filter_config": {"min_total_spent": 500}},

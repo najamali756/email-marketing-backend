@@ -65,7 +65,6 @@ class EmailSegmentListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Store-scoped versioned caching for sub-10ms response
         ver = get_segment_cache_version(store.id)
         cache_key = f"seg_list_{store.id}_v{ver}"
         cached_data = cache.get(cache_key)

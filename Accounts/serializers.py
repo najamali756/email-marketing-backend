@@ -259,7 +259,6 @@ class InviteUserSerializer(serializers.Serializer):
         assigned_stores = validated_data.pop("assigned_stores", [])
 
         if existing_user:
-            # Update user type and assigned stores if they exist
             existing_user.user_type = validated_data.get("user_type", existing_user.user_type)
             if assigned_stores:
                 existing_user.assigned_stores.set(assigned_stores)

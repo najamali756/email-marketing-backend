@@ -29,18 +29,16 @@ class EmailProvider:
         return server
 
     def send(self, to_email, subject, html_body, from_name=None, unsubscribe_url=None):
-        # 1. Resolve from_email and reply_to based on StoreSenderIdentity
         identity = StoreSenderIdentity.objects.filter(store=self.store, is_active=True).first()
         
         from_name = from_name or (identity.brand_name if identity and identity.brand_name else self.store.default_from_name or self.store.name)
         
-        # Determine from_email depending on the mode
         platform_domain = getattr(settings, "SENDGRID_PLATFORM_DOMAIN", "technogroves.com")
         if identity:
             if identity.mode == "platform_domain":
                 brand_slug = slugify(identity.brand_name or self.store.name)
                 from_email = f"{brand_slug}@{platform_domain}"
-            else:  # custom_domain
+            else:
                 if identity.from_email and "@" in identity.from_email:
                     from_email = identity.from_email
                 elif identity.domain:
@@ -49,15 +47,12 @@ class EmailProvider:
                     from_email = self.store.default_from_email or f"noreply@{platform_domain}"
             reply_to = identity.reply_to_email or None
         else:
-            # Fall back to default_from_email or platform domain
             from_email = self.store.default_from_email or f"noreply@{platform_domain}"
             reply_to = None
 
-        # Sanity check on from_email
         if not from_email or "@" not in from_email:
             from_email = f"noreply@{platform_domain}"
 
-        # 2. Get SMTP settings
         host = getattr(settings, "EMAIL_HOST", "email-smtp.eu-north-1.amazonaws.com")
         port = int(getattr(settings, "EMAIL_PORT", 465))
         use_ssl = getattr(settings, "EMAIL_USE_SSL", True if port == 465 else False)
@@ -65,7 +60,6 @@ class EmailProvider:
         username = getattr(settings, "EMAIL_HOST_USER", "apikey")
         password = getattr(settings, "EMAIL_HOST_PASSWORD", "")
 
-        # 3. Build MIMEMultipart email message with full UTF-8 Header support
         message = MIMEMultipart("alternative")
         message["Subject"] = Header(subject or "No Subject", "utf-8")
         
@@ -78,14 +72,12 @@ class EmailProvider:
         if reply_to:
             message["Reply-To"] = reply_to
 
-        # Attach RFC 8058 1-Click Unsubscribe headers for Gmail / Yahoo / Outlook
         if unsubscribe_url:
             message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
             message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
         message.attach(MIMEText(html_body or "", "html", "utf-8"))
 
-        # 4. Connect and send email via SMTP server (with automatic fallback if port is blocked by ISP)
         connection_attempts = [
             (port, use_ssl, use_tls),
         ]

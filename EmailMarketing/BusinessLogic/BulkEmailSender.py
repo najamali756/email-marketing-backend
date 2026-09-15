@@ -113,7 +113,6 @@ class BulkEmailSender:
         while True:
             close_old_connections()
 
-            # Dynamic check: stop if campaign was paused or cancelled by user
             campaign.refresh_from_db()
             if campaign.status in [EmailCampaignStatusEnum.cancelled.value, "Paused", "Cancelled"]:
                 print(f"[BULK EMAIL SENDER] Campaign {campaign.id} status is '{campaign.status}'. Stopping batch send loop.")
@@ -168,7 +167,6 @@ class BulkEmailSender:
 
                 recipient.save(update_fields=["status", "sent_at", "error_message", "updated_at"])
 
-            # Real-time progress update
             campaign.sent_count = EmailCampaignRecipient.objects.filter(
                 campaign=campaign, status=EmailRecipientStatusEnum.sent.value
             ).count()
@@ -236,7 +234,6 @@ class BulkEmailSender:
         unsub_url = self._build_unsubscribe_url(recipient)
         unsub_tag = f'<a href="{unsub_url}" style="color: #4f46e5; text-decoration: underline;">Unsubscribe</a>'
 
-        # 1. Clean Markdown style [url](url) or [text](url) for unsubscribe links
         html_content = re.sub(
             r'\[([^\]]*)\]\((https?://[^\s\)]+emailMarketing/unsubscribe[^\s\)]*)\)',
             r'<a href="\g<2>" style="color: #4f46e5; text-decoration: underline;">Unsubscribe</a>',
@@ -244,7 +241,6 @@ class BulkEmailSender:
             flags=re.IGNORECASE
         )
 
-        # 2. Clean <a href="...">https://...</a> where the inner text is the raw unsubscribe URL
         html_content = re.sub(
             r"""<a([^>]*?href=["'][^"']*emailMarketing/unsubscribe[^"']*["'][^>]*?)>\s*https?://[^\s<]+\s*</a>""",
             rf'<a style="color: #4f46e5; text-decoration: underline;">Unsubscribe</a>',
@@ -252,13 +248,11 @@ class BulkEmailSender:
             flags=re.IGNORECASE
         )
 
-        # 3. If already inside href="...", replace with url; if standalone, replace with styled <a> tag
         html_content = html_content.replace('href="{{ unsubscribe_url }}"', f'href="{unsub_url}"')
         html_content = html_content.replace('href="{unsubscribe_url}"', f'href="{unsub_url}"')
         html_content = html_content.replace("{{ unsubscribe_url }}", unsub_tag).replace("{unsubscribe_url}", unsub_tag)
         html_content = html_content.replace("{{ unsubscribe_link }}", unsub_tag).replace("{unsubscribe_link}", unsub_tag)
 
-        # 4. Clean any leftover raw plain-text unsubscribe URLs
         html_content = re.sub(
             r"""(?<!href=["'])(https?://[^\s"'<]+emailMarketing/unsubscribe[^\s"'<]*)""",
             unsub_tag,
@@ -266,13 +260,11 @@ class BulkEmailSender:
             flags=re.IGNORECASE
         )
 
-        # Append execution_id parameter to all href links for Web Pixel attribution tracking
    
         exec_id = str(recipient.tracking_token)
 
         def _append_execution_param(match):
             url = match.group(1)
-            # Skip mailto, tel, anchor, or unsubscribe links
             if url.startswith("#") or url.startswith("mailto:") or url.startswith("tel:") or "unsubscribe" in url.lower():
                 return f'href="{url}"'
             sep = "&" if "?" in url else "?"
@@ -281,7 +273,6 @@ class BulkEmailSender:
 
         html_content = re.sub(r'href=["\']([^"\']+)["\']', _append_execution_param, html_content)
 
-        # Embed 1x1 transparent PNG open tracking pixel
         if self.public_url:
             open_pixel_url = f"{self.public_url.rstrip('/')}/emailMarketing/track/open?token={recipient.tracking_token}"
             pixel_tag = f'<img src="{open_pixel_url}" alt="" width="1" height="1" border="0" style="display:none;width:1px;height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;" />'

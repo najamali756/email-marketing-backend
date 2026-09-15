@@ -20,7 +20,7 @@ from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 from EmailMarketing.BusinessLogic.TemplateRenderer import TemplateRenderer
 
-from django.db.models import Q, Sum
+from django.db.models import Case, Count, IntegerField, Q, Sum, When
 from EmailMarketing.models import EmailRecipientStatusEnum
 from Accounts.models import Contact
 from shopify_integration.sync import fetch_and_save_store_currency
@@ -69,7 +69,6 @@ class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Server-side pagination parameters (initial count / page_size = 10)
         try:
             page = int(request.GET.get("page", 1))
         except (ValueError, TypeError):
@@ -84,14 +83,12 @@ class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
         status_param = request.GET.get("status", "").strip()
         type_param = request.GET.get("campaign_type", "").strip() or request.GET.get("type", "").strip()
 
-        # Cache check for sub-10ms response
         ver = get_campaign_cache_version(store.id)
         cache_key = f"camp_list_response_v2_{store.id}_v{ver}_{page}_{page_size}_{search}_{status_param}_{type_param}"
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return Response(cached_data)
 
-        # Ultra-fast single query with select_related and only required columns
         qs = EmailCampaign.objects.filter(store=store).select_related("segment").only(
             "id", "name", "subject", "preview_text", "status", "campaign_type",
             "scheduled_at", "sent_at", "total_recipients", "sent_count",
@@ -128,7 +125,6 @@ class EmailCampaignListCreateView(StoreAuthenticatedMixin, ListCreateAPIView):
             "results": serializer.data,
         }
 
-        # Cache for 30s
         cache.set(cache_key, response_data, 30)
         return Response(response_data)
 
@@ -155,7 +151,6 @@ class EmailCampaignStatsView(StoreAuthenticatedMixin, APIView):
         if cached_stats is not None:
             return Response(cached_stats)
 
-        from django.db.models import Count, Case, When, IntegerField, Sum
         base_qs = EmailCampaign.objects.filter(store=store)
         agg = base_qs.aggregate(
             total=Count("id"),
@@ -356,7 +351,6 @@ class ResumeCampaignView(StoreAuthenticatedMixin, APIView):
         if campaign.status in [EmailCampaignStatusEnum.sent.value, "Sent"]:
             return Response({"detail": "Campaign has already completed."}, status=400)
 
-        # Update status to Sending and trigger async batch worker
         campaign.status = EmailCampaignStatusEnum.sending.value
         campaign.save(update_fields=["status", "updated_at"])
 
@@ -481,7 +475,6 @@ class UploadCampaignRecipientsView(StoreAuthenticatedMixin, APIView):
             seen_emails.add(email_lower)
             valid_recipients.append((email_val, row))
 
-        # Clear existing recipients for this campaign to replace them
         EmailCampaignRecipient.objects.filter(campaign=campaign).delete()
 
         created_count = 0

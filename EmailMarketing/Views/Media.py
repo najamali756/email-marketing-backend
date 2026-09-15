@@ -14,7 +14,6 @@ from EmailMarketing.models import EmailTemplateMedia, EmailTemplate
 from EmailMarketing.Views.base import StoreAuthenticatedMixin
 
 def upload_file_to_s3_or_local(file_content, file_name, file_type="image"):
-    # AWS S3 Settings lookup
     aws_key = os.environ.get("AWS_ACCESS_KEY_ID")
     aws_secret = os.environ.get("AWS_SECRET_ACCESS_KEY")
     bucket_name = os.environ.get("AWS_STORAGE_BUCKET_NAME", "marketing-app-media")
@@ -52,10 +51,8 @@ def upload_file_to_s3_or_local(file_content, file_name, file_type="image"):
         except Exception as e:
             print("S3 Upload Exception:", e)
 
-    # Local fallback storage
     django_content = ContentFile(file_content)
     saved_path = default_storage.save(f"email_marketing_media/{safe_filename}", django_content)
-    # Serves via Django media url configurations
     return f"http://localhost:8000/media/{saved_path}"
 
 
@@ -85,7 +82,6 @@ class EmailTemplateMediaListView(StoreAuthenticatedMixin, APIView):
 
         results = []
 
-        # 1. Handle JSON Batch Base64 List
         media_files = request.data.get("media_files", [])
         if media_files:
             for item in media_files:
@@ -98,7 +94,6 @@ class EmailTemplateMediaListView(StoreAuthenticatedMixin, APIView):
                     continue
 
                 try:
-                    # Decode base64
                     if ";base64," in base64_str:
                         format_header, imgstr = base64_str.split(';base64,')
                     else:
@@ -123,7 +118,6 @@ class EmailTemplateMediaListView(StoreAuthenticatedMixin, APIView):
                 except Exception as e:
                     print("Error decoding base64 item:", e)
 
-        # 2. Handle Form File Uploads
         uploaded_file = request.FILES.get("file")
         if uploaded_file:
             client_uuid = request.data.get("uuid", f"media_{uuid.uuid4().hex[:6]}")
@@ -154,7 +148,6 @@ class EmailTemplateMediaDetailView(StoreAuthenticatedMixin, APIView):
     def delete(self, request, pk):
         try:
             item = EmailTemplateMedia.objects.get(pk=pk, store=request.store)
-            # Soft delete or hard delete depending on needs, let's hard delete
             item.delete()
             return Response({"success": True}, status=status.HTTP_200_OK)
         except EmailTemplateMedia.DoesNotExist:

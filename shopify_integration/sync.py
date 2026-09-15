@@ -9,6 +9,7 @@ from django.utils import timezone as django_timezone
 from Accounts.models import Contact
 from EmailMarketing.models import EmailSegment
 from shopify_integration.models import ShopifySettings
+from shopify_integration import signals
 
 logger = logging.getLogger(__name__)
 
@@ -77,8 +78,6 @@ def shopify_api_request(method, url, store, headers=None, **kwargs):
         )
         return response
 
-    # Mutate the caller's header dictionary too, so subsequent paginated or
-    # batched requests immediately use the newly rotated access token.
     request_headers["X-Shopify-Access-Token"] = new_access_token
     retry_response = getattr(requests, method.lower())(url, headers=request_headers, **kwargs)
     if retry_response.status_code in (401, 403):
@@ -100,7 +99,6 @@ def get_valid_shopify_token(store):
         logger.warning(f"[SHOPIFY TOKEN] No access token found in settings for store: {store}")
         return None
 
-    # Sanity check: If token was saved as shpss_ (secret key), move it to custom_api_secret where it belongs
     token = settings_obj.shopify_access_token
     if token.startswith("shpss_"):
         logger.error(f"[SHOPIFY TOKEN] Invalid token state for store '{store.name}': Access token starts with 'shpss_'.")
@@ -110,16 +108,13 @@ def get_valid_shopify_token(store):
             settings_obj.save()
         return None
 
-    # If the token doesn't expire (custom app / non-expiring token), return it directly
     if not settings_obj.shopify_refresh_token or not settings_obj.shopify_token_expires_at:
         return token
 
-    # Check if token expires within 5 minutes
     now = django_timezone.now()
     if settings_obj.shopify_token_expires_at > now + timedelta(minutes=5):
         return settings_obj.shopify_access_token
 
-    # Token is expired or about to expire -> Auto-refresh using refresh_token!
     logger.info(f"[SHOPIFY TOKEN] Token expiring soon for store '{store.name}'. Triggering auto-refresh...")
     return refresh_shopify_token_now(store) or settings_obj.shopify_access_token
 
@@ -132,10 +127,8 @@ def sync_customers(shop_url, access_token, store, full_resync=False, updated_at_
     """
     active_token = get_valid_shopify_token(store) or access_token
 
-    # Disconnect Contact post_save signal to prevent loopback sync calls during bulk import
     try:
-        from shopify_integration.signals import sync_contact_marketing_update_to_shopify
-        post_save.disconnect(sync_contact_marketing_update_to_shopify, sender=Contact)
+        post_save.disconnect(signals.sync_contact_marketing_update_to_shopify, sender=Contact)
     except Exception as sig_err:
         logger.warning(f"[SHOPIFY SYNC] Signal disconnect warning: {sig_err}")
 
@@ -178,7 +171,6 @@ def sync_customers(shop_url, access_token, store, full_resync=False, updated_at_
                 phone = cust.get("phone", "") or ""
                 external_id = str(cust.get("id", ""))
 
-                # Extract marketing consent from both accepts_marketing and email_marketing_consent object
                 accepts_marketing = cust.get("accepts_marketing", False)
                 email_consent = cust.get("email_marketing_consent") or {}
                 if isinstance(email_consent, dict) and email_consent.get("state"):
@@ -222,10 +214,8 @@ def sync_customers(shop_url, access_token, store, full_resync=False, updated_at_
 
     logger.info(f"[SHOPIFY SYNC] Finished customer sync. Total synced: {total_synced}")
 
-    # Reconnect Contact post_save signal after import completes
     try:
-        from shopify_integration.signals import sync_contact_marketing_update_to_shopify
-        post_save.connect(sync_contact_marketing_update_to_shopify, sender=Contact)
+        post_save.connect(signals.sync_contact_marketing_update_to_shopify, sender=Contact)
     except Exception as sig_err:
         logger.warning(f"[SHOPIFY SYNC] Signal reconnect warning: {sig_err}")
 
@@ -238,7 +228,6 @@ def fetch_segment_member_emails(shop_url, access_token, shopify_id=None, shopify
     """
     emails = []
 
-    # 1. Primary: Shopify GraphQL customerSegmentMembers
     if shopify_id:
         url = f"https://{shop_url}/admin/api/2023-04/graphql.json"
         headers = {
@@ -286,7 +275,6 @@ def fetch_segment_member_emails(shop_url, access_token, shopify_id=None, shopify
         except Exception as err:
             logger.error(f"[SHOPIFY SEGMENT MEMBERS] GraphQL fetch failed for {segment_gid}: {err}")
 
-    # 2. Secondary Fallback: Evaluate query locally on store Contacts if API returned empty
     if not emails and store and shopify_query:
         logger.info(f"[SHOPIFY SEGMENT FALLBACK] Evaluating query '{shopify_query}' on store contacts...")
         q_str = shopify_query.lower()
@@ -468,7 +456,6 @@ def update_customer_marketing_on_shopify(shop_url, access_token, store, external
     try:
         response = shopify_api_request("put", url, store, headers=headers, json=payload_modern)
 
-        # Fallback to legacy payload if status code is not 200
         if response.status_code != 200:
             payload_legacy = {
                 "customer": {

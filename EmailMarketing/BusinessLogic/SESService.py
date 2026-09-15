@@ -22,7 +22,6 @@ class SESService:
     @classmethod
     def register_domain(cls, domain):
         if cls.is_dummy():
-            # Return realistic mock SES DKIM CNAME records for local testing
             dns_records = {
                 "dkim1": {
                     "type": "CNAME",
@@ -51,11 +50,9 @@ class SESService:
         try:
             client = cls.get_client()
             
-            # Start Easy DKIM verification process
             dkim_response = client.verify_domain_dkim(Domain=domain)
             tokens = dkim_response.get("DkimTokens", [])
             
-            # Also request basic domain verification TXT record to verify domain identity
             client.verify_domain_identity(Domain=domain)
 
             dns_records = {}
@@ -77,17 +74,15 @@ class SESService:
     @classmethod
     def validate_domain(cls, domain_name):
         if cls.is_dummy():
-            return True # Auto-verify in local mock mode
+            return True
 
         try:
             client = cls.get_client()
             
-            # Get general verification status
             response = client.get_identity_verification_attributes(Identities=[domain_name])
             attrs = response.get("VerificationAttributes", {})
             status = attrs.get(domain_name, {}).get("VerificationStatus", "Pending")
             
-            # Get DKIM verification status
             dkim_response = client.get_identity_dkim_attributes(Identities=[domain_name])
             dkim_attrs = dkim_response.get("DkimAttributes", {})
             dkim_status = dkim_attrs.get(domain_name, {}).get("DkimVerificationStatus", "Pending")

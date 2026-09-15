@@ -3,6 +3,8 @@ from rest_framework.authentication import TokenAuthentication
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
+from Accounts.models import Client, ClientUser, Store
+
 
 class AuthenticatedMixin:
     authentication_classes = []
@@ -42,7 +44,6 @@ class ClientContextMixin(AuthenticatedMixin):
 
         user = request.user
         client_id = request.META.get("HTTP_X_CLIENT_ID") or request.query_params.get("client_id")
-        from Accounts.models import Client, ClientUser
 
         cache_key = f"auth_client_{user.id}_{client_id}"
         try:
@@ -54,20 +55,17 @@ class ClientContextMixin(AuthenticatedMixin):
             pass
 
         if user.is_staff or user.is_superuser:
-            # Staff has access to any client
             if client_id:
                 client = Client.objects.filter(id=client_id, is_active=True).first()
             else:
                 client = Client.objects.filter(is_active=True).first()
         else:
-            # Admin/Operator can only access their linked clients
             memberships = ClientUser.objects.filter(user=user, is_active=True, client__is_active=True)
             if client_id:
                 client = Client.objects.filter(id=client_id, is_active=True).first()
                 if client not in [m.client for m in memberships]:
                     client = None
             else:
-                # Default to first membership client
                 first_membership = memberships.first()
                 client = first_membership.client if first_membership else None
 
@@ -92,7 +90,6 @@ class StoreContextMixin(ClientContextMixin):
 
         store_id = request.META.get("HTTP_X_STORE_ID") or request.query_params.get("store_id")
         user = request.user
-        from Accounts.models import Store
 
         cache_key = f"auth_store_{user.id}_{request.client.id}_{store_id}"
         try:
@@ -103,13 +100,11 @@ class StoreContextMixin(ClientContextMixin):
             pass
 
         if user.is_staff or user.is_superuser or user.user_type == 'admin':
-            # Staff/Admin has access to all active stores of their resolved client
             if store_id:
                 store = Store.objects.filter(id=store_id, client=request.client, is_active=True).first()
             else:
                 store = Store.objects.filter(client=request.client, is_active=True).first()
         else:
-            # Operator has access only to their assigned stores belonging to the resolved client
             assigned = user.assigned_stores.filter(client=request.client, is_active=True)
             if store_id:
                 store = assigned.filter(id=store_id).first()

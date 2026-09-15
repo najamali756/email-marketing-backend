@@ -27,21 +27,18 @@ class EmailUnsubscribeView(APIView):
         store = recipient.campaign.store
         email = recipient.email
 
-        # 1. Save record in EmailUnsubscribe
         EmailUnsubscribe.objects.get_or_create(
             store=store,
             email=email,
             defaults={"contact": recipient.contact},
         )
 
-        # 2. Update local Contact marketing status
         contact = recipient.contact
         if contact:
             contact.accept_email_marketing = False
             contact.accept_email_marketing_at = timezone.now()
             contact.save(update_fields=["accept_email_marketing", "accept_email_marketing_at"])
 
-            # 3. Trigger Shopify background unsubscribe if store has Shopify integration & contact has external_id
             if contact.external_id:
                 settings_obj = ShopifySettings.objects.filter(store=store).first()
                 if settings_obj and settings_obj.shopify_access_token:
@@ -53,14 +50,12 @@ class EmailUnsubscribeView(APIView):
                         accepts_marketing=False
                     )
 
-        # 4. Update recipient timestamp and status
         now = timezone.now()
         recipient.unsubscribed_at = now
       
         recipient.status = EmailRecipientStatusEnum.unsubscribed.value
         recipient.save(update_fields=["unsubscribed_at", "status", "updated_at"])
 
-        # 5. Update campaign aggregate unsubscribe_count
         campaign = recipient.campaign
         campaign.unsubscribe_count = EmailCampaignRecipient.objects.filter(
             campaign=campaign, unsubscribed_at__isnull=False

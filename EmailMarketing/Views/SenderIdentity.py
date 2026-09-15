@@ -27,7 +27,6 @@ class StoreSenderIdentityView(StoreAuthenticatedMixin, APIView):
         if not brand_name or not reply_to_email:
             return Response({"error": "Brand name and reply-to email are required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Get or create identity config
         identity, created = StoreSenderIdentity.objects.get_or_create(
             store=request.store,
             is_active=True,
@@ -46,7 +45,6 @@ class StoreSenderIdentityView(StoreAuthenticatedMixin, APIView):
             identity.brand_name = brand_name
             identity.reply_to_email = reply_to_email
 
-        # Synchronize Store model default fallbacks behind the scenes
         request.store.default_from_name = brand_name
         request.store.default_from_email = reply_to_email
         request.store.save()
@@ -61,11 +59,10 @@ class StoreSenderIdentityView(StoreAuthenticatedMixin, APIView):
             identity.sendgrid_domain_id = None
             identity.dns_records = None
             identity.save()
-        else: # custom_domain
+        else:
             if not domain or not from_email:
                 return Response({"error": "Domain and From email are required for custom domain mode."}, status=status.HTTP_400_BAD_REQUEST)
             
-            # If domain has changed or we didn't register it yet, call SES to register
             if identity.domain != domain or not identity.sendgrid_domain_id:
                 try:
                     res = SESService.register_domain(domain)

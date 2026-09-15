@@ -1,3 +1,5 @@
+from importlib import import_module
+
 from django.apps import AppConfig
 
 
@@ -6,4 +8,4 @@ class ShopifyIntegrationConfig(AppConfig):
     name = 'shopify_integration'
 
     def ready(self):
-        import shopify_integration.signals
+        import_module("shopify_integration.signals")

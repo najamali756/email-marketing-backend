@@ -6,7 +6,6 @@ from rest_framework.views import APIView
 from EmailMarketing.models import EmailCampaignRecipient, EmailRecipientStatusEnum
 
 
-# 1x1 transparent PNG image binary data
 TRANSPARENT_1X1_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 )
@@ -45,7 +44,6 @@ class EmailOpenTrackingView(APIView):
             except Exception as e:
                 pass
 
-        # Return 1x1 transparent PNG pixel image with no-cache headers
         response = HttpResponse(TRANSPARENT_1X1_PNG, content_type="image/png")
         response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response["Pragma"] = "no-cache"

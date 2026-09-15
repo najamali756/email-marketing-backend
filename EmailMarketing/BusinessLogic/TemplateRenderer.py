@@ -91,9 +91,6 @@ class TemplateRenderer:
         if not html_content:
             html_content = ""
             
-        # 1. Strip out ANY existing preview text divs that were baked into the HTML
-        # by the template editor, or injected previously.
-        # The frontend editor uses: style="display: none; max-height: 0px; overflow: hidden;"
         html_content = re.sub(
             r"""<div[^>]*style=["'][^"']*display:\s*none;\s*max-height:\s*0px;\s*overflow:\s*hidden;[^"']*["'][^>]*>.*?</div>""",
             "",
@@ -104,7 +101,6 @@ class TemplateRenderer:
         if not preview_text:
             return html_content
             
-        # 2. Inject the true, correct preview text
         padding = "&zwnj;&nbsp;" * 100
         hidden_div = f'<div style="display: none; max-height: 0px; overflow: hidden; mso-hide: all; opacity: 0; visibility: hidden;">{preview_text}{padding}</div>'
         

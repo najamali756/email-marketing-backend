@@ -22,7 +22,6 @@ from shopify_integration.sync import (
 
 logger = logging.getLogger(__name__)
 
-# Standard Shopify GraphQL webhook topics to register
 SHOPIFY_WEBHOOK_TOPICS = [
     "CUSTOMERS_CREATE",
     "CUSTOMERS_UPDATE",
@@ -49,7 +48,6 @@ def register_shopify_webhooks(store, custom_callback_url=None):
     shop_url = settings_obj.shop_url
     gql_url = f"https://{shop_url}/admin/api/2023-04/graphql.json"
 
-    # Resolve callback URL
     backend_base = getattr(settings_conf, "BACKEND_BASE_URL", "").rstrip("/")
     if not backend_base:
         backend_base = "https://marketing-be.technogroves.com"
@@ -61,7 +59,6 @@ def register_shopify_webhooks(store, custom_callback_url=None):
         "Content-Type": "application/json",
     }
 
-    # Step 1: List existing webhook subscriptions via GraphQL
     list_query = """
     {
       webhookSubscriptions(first: 100) {
@@ -90,7 +87,6 @@ def register_shopify_webhooks(store, custom_callback_url=None):
                 sub_id = sub_node.get("id")
                 topic = sub_node.get("topic")
                 
-                # Delete existing webhook if topic matches our target topics
                 if topic in SHOPIFY_WEBHOOK_TOPICS and sub_id:
                     delete_mutation = """
                     mutation webhookSubscriptionDelete($id: ID!) {
@@ -126,7 +122,6 @@ def register_shopify_webhooks(store, custom_callback_url=None):
     except Exception as list_err:
         logger.warning(f"[SHOPIFY WEBHOOK REGISTER] Listing existing webhooks warning: {list_err}")
 
-    # Step 2: Register fresh webhooks for each topic via GraphQL mutation
     registered = []
     errors = []
 
@@ -231,10 +226,8 @@ class ShopifyWebhookReceiverView(APIView):
         if not shop_domain:
             return HttpResponse("Missing shop domain header", status=400)
 
-        # Normalize domain (e.g. "my-store.myshopify.com")
         clean_shop = shop_domain.replace("https://", "").replace("http://", "").strip("/").split("/")[0].lower()
 
-        # Lookup Store settings by shop_url (matching clean domain or full URL)
         settings_obj = (
             ShopifySettings.objects.filter(shop_url__icontains=clean_shop).first() or
             ShopifySettings.objects.filter(shop_url=shop_domain).first()
@@ -246,7 +239,6 @@ class ShopifyWebhookReceiverView(APIView):
         store = settings_obj.store
         api_secret = settings_obj.get_api_secret() if settings_obj else getattr(settings_conf, "SHOPIFY_API_SECRET", "")
 
-        # Verify HMAC Signature
         if api_secret and shopify_hmac:
             raw_body = request.body
             calculated_hmac = base64.b64encode(
@@ -263,9 +255,6 @@ class ShopifyWebhookReceiverView(APIView):
             logger.error(f"[SHOPIFY WEBHOOK RECEIVER] Failed to parse JSON payload: {e}")
             return HttpResponse("Invalid JSON payload", status=400)
 
-        # -------------------------------------------------------------
-        # EVENT HANDLER 1: Customer Created / Updated
-        # -------------------------------------------------------------
         if "CUSTOMER" in topic:
             email = payload.get("email")
             if email:
@@ -304,9 +293,6 @@ class ShopifyWebhookReceiverView(APIView):
                 action = "created" if created else "updated"
                 logger.info(f"[SHOPIFY WEBHOOK] Customer {email} {action} in store {store.name}")
 
-        # -------------------------------------------------------------
-        # EVENT HANDLER 2: Segment Created / Updated
-        # -------------------------------------------------------------
         elif "SEGMENT" in topic and "DELETE" not in topic:
             shopify_id = payload.get("id")
             name = payload.get("name")
@@ -340,9 +326,6 @@ class ShopifyWebhookReceiverView(APIView):
                 segment.contacts.set(matching_contacts)
                 logger.info(f"[SHOPIFY WEBHOOK] Segment '{name}' synced with {matching_contacts.count()} member contacts")
 
-        # -------------------------------------------------------------
-        # EVENT HANDLER 3: Segment Deleted
-        # -------------------------------------------------------------
         elif "SEGMENT_DELETE" in topic or "SEGMENTS_DELETE" in topic:
             shopify_id = payload.get("id")
             name = payload.get("name")

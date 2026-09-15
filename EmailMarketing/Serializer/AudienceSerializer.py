@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from EmailMarketing.models import EmailSegment
+from Accounts.models import Contact
 
 
 class EmailSegmentListSerializer(serializers.ModelSerializer):
@@ -20,7 +21,6 @@ class EmailSegmentListSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         data = super().to_representation(instance)
         fc = instance.filter_config or {}
-        # Keep filter_config lightweight for list/table display by excluding massive member_emails
         data["filter_config"] = {
             "shopify_id": fc.get("shopify_id"),
             "shopify_query": fc.get("shopify_query") or "",
@@ -67,7 +67,6 @@ class EmailSegmentDetailSerializer(serializers.ModelSerializer):
         _, page_emails, _, _, _, _ = self._get_emails_and_params(obj)
         if not page_emails:
             return []
-        from Accounts.models import Contact
         contacts = Contact.objects.filter(store=obj.store, email__in=page_emails).values(
             "id", "email", "first_name", "last_name", "total_orders", "total_spent", "accept_email_marketing"
         )

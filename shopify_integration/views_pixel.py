@@ -6,6 +6,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
 from EmailMarketing.models import EmailCampaign, EmailCampaignRecipient, EmailRecipientStatusEnum
+from EmailMarketing.Views.Campaigns import recalculate_campaign_stats
 
 
 class ShopifyPixelEventIngestionView(APIView):
@@ -65,7 +66,6 @@ class ShopifyPixelEventIngestionView(APIView):
                         recipient.status = EmailRecipientStatusEnum.purchased.value
                         recipient.save(update_fields=["converted_at", "clicked_at", "opened_at", "order_id", "order_total", "discount_code", "status", "updated_at"])
 
-                        from EmailMarketing.Views.Campaigns import recalculate_campaign_stats
                         recalculate_campaign_stats(campaign)
                     
                     elif event_name in ["checkout_started", "checkout_initiated"]:
@@ -76,7 +76,6 @@ class ShopifyPixelEventIngestionView(APIView):
                             recipient.status = EmailRecipientStatusEnum.checkout_started.value
                         recipient.save(update_fields=["clicked_at", "opened_at", "checkout_started_count", "status", "updated_at"])
 
-                        from EmailMarketing.Views.Campaigns import recalculate_campaign_stats
                         recalculate_campaign_stats(campaign)
 
                     elif event_name == "product_added_to_cart":
@@ -92,7 +91,6 @@ class ShopifyPixelEventIngestionView(APIView):
                             recipient.status = EmailRecipientStatusEnum.added_to_cart.value
                         recipient.save(update_fields=["clicked_at", "opened_at", "add_to_cart_count", "cart_total", "status", "updated_at"])
 
-                        from EmailMarketing.Views.Campaigns import recalculate_campaign_stats
                         recalculate_campaign_stats(campaign)
 
                     elif event_name == "page_viewed":
@@ -102,7 +100,6 @@ class ShopifyPixelEventIngestionView(APIView):
                             recipient.status = EmailRecipientStatusEnum.opened.value
                         recipient.save(update_fields=["opened_at", "page_view_count", "status", "updated_at"])
 
-                        from EmailMarketing.Views.Campaigns import recalculate_campaign_stats
                         recalculate_campaign_stats(campaign)
 
             except Exception as e:

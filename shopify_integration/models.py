@@ -1,5 +1,6 @@
 from django.db import models
 from Accounts.models import Store
+from django.conf import settings
 
 class ShopifySettings(models.Model):
     store = models.OneToOneField(Store, on_delete=models.CASCADE, related_name="shopify_settings")
@@ -15,13 +16,11 @@ class ShopifySettings(models.Model):
     def get_api_key(self):
         if self.custom_api_key and self.custom_api_key.strip():
             return self.custom_api_key.strip()
-        from django.conf import settings
         return getattr(settings, "SHOPIFY_API_KEY", "")
 
     def get_api_secret(self):
         if self.custom_api_secret and self.custom_api_secret.strip():
             return self.custom_api_secret.strip()
-        from django.conf import settings
         return getattr(settings, "SHOPIFY_API_SECRET", "")
 
     def __str__(self):
