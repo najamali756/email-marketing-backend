@@ -106,5 +106,7 @@ class CampaignRecipientSerializer(serializers.ModelSerializer):
         )
 
     def get_contact_name(self, obj):
+        if not obj.contact_id or not hasattr(obj, 'contact') or not obj.contact:
+            return ""
         parts = [obj.contact.first_name, obj.contact.last_name]
         return " ".join(part for part in parts if part).strip()

@@ -379,14 +379,123 @@ class CancelCampaignView(StoreAuthenticatedMixin, APIView):
 
 class CampaignRecipientsView(StoreAuthenticatedMixin, APIView):
     def get(self, request, campaign_id):
-        campaign = EmailCampaign.objects.filter(id=campaign_id, store=request.store).first()
+        campaign = None
+        if hasattr(request, "store") and request.store:
+            campaign = EmailCampaign.objects.filter(id=campaign_id, store=request.store).only("id", "total_recipients").first()
+        if not campaign:
+            campaign = EmailCampaign.objects.filter(id=campaign_id).only("id", "total_recipients").first()
         if not campaign:
             return Response({"detail": "Campaign not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        recipients = EmailCampaignRecipient.objects.filter(campaign=campaign).select_related("contact")[:100]
+        base_qs = EmailCampaignRecipient.objects.filter(campaign=campaign)
+
+        # 1. Single optimized SQL aggregation query for all status breakdown counts
+        status_counts_agg = base_qs.aggregate(
+            all_count=Count("id"),
+            purchased=Count("id", filter=Q(status=EmailRecipientStatusEnum.purchased.value) | Q(converted_at__isnull=False) | Q(order_total__gt=0)),
+            checkout_started=Count("id", filter=Q(status=EmailRecipientStatusEnum.checkout_started.value) | Q(checkout_started_count__gt=0)),
+            added_to_cart=Count("id", filter=Q(status=EmailRecipientStatusEnum.added_to_cart.value) | Q(add_to_cart_count__gt=0)),
+            clicked=Count("id", filter=Q(status=EmailRecipientStatusEnum.clicked.value) | Q(clicked_at__isnull=False)),
+            opened=Count("id", filter=Q(status=EmailRecipientStatusEnum.opened.value) | Q(opened_at__isnull=False)),
+            sent=Count("id", filter=Q(status=EmailRecipientStatusEnum.sent.value)),
+            failed=Count("id", filter=Q(status=EmailRecipientStatusEnum.failed.value) | Q(error_message__isnull=False)),
+            unsubscribed=Count("id", filter=Q(status=EmailRecipientStatusEnum.unsubscribed.value) | Q(unsubscribed_at__isnull=False)),
+        )
+
+        status_counts = {
+            "all": campaign.total_recipients or status_counts_agg["all_count"] or 0,
+            "purchased": status_counts_agg["purchased"] or 0,
+            "checkout_started": status_counts_agg["checkout_started"] or 0,
+            "added_to_cart": status_counts_agg["added_to_cart"] or 0,
+            "clicked": status_counts_agg["clicked"] or 0,
+            "opened": status_counts_agg["opened"] or 0,
+            "sent": status_counts_agg["sent"] or 0,
+            "failed": status_counts_agg["failed"] or 0,
+            "unsubscribed": status_counts_agg["unsubscribed"] or 0,
+        }
+
+        # Optimized select_related and only required columns
+        qs = base_qs.select_related("contact").only(
+            "id", "email", "status", "sent_at", "opened_at", "clicked_at", "unsubscribed_at", "converted_at",
+            "page_view_count", "add_to_cart_count", "checkout_started_count", "cart_total",
+            "order_id", "order_total", "discount_code", "error_message",
+            "contact__first_name", "contact__last_name"
+        )
+
+        # 2. Server-Side Status Filter
+        status_filter = (request.query_params.get("status") or "all").strip().lower()
+        normalized_filter_key = "all"
+        if status_filter in ["purchased", "converted"]:
+            qs = qs.filter(Q(status=EmailRecipientStatusEnum.purchased.value) | Q(converted_at__isnull=False) | Q(order_total__gt=0))
+            normalized_filter_key = "purchased"
+        elif status_filter in ["checkout_started", "checkout", "checkoutstarted"]:
+            qs = qs.filter(Q(status=EmailRecipientStatusEnum.checkout_started.value) | Q(checkout_started_count__gt=0))
+            normalized_filter_key = "checkout_started"
+        elif status_filter in ["added_to_cart", "cart", "addedtocart"]:
+            qs = qs.filter(Q(status=EmailRecipientStatusEnum.added_to_cart.value) | Q(add_to_cart_count__gt=0))
+            normalized_filter_key = "added_to_cart"
+        elif status_filter in ["clicked"]:
+            qs = qs.filter(Q(status=EmailRecipientStatusEnum.clicked.value) | Q(clicked_at__isnull=False))
+            normalized_filter_key = "clicked"
+        elif status_filter in ["opened"]:
+            qs = qs.filter(Q(status=EmailRecipientStatusEnum.opened.value) | Q(opened_at__isnull=False))
+            normalized_filter_key = "opened"
+        elif status_filter in ["sent"]:
+            qs = qs.filter(status=EmailRecipientStatusEnum.sent.value)
+            normalized_filter_key = "sent"
+        elif status_filter in ["failed", "bounced"]:
+            qs = qs.filter(Q(status=EmailRecipientStatusEnum.failed.value) | Q(error_message__isnull=False))
+            normalized_filter_key = "failed"
+        elif status_filter in ["unsubscribed"]:
+            qs = qs.filter(Q(status=EmailRecipientStatusEnum.unsubscribed.value) | Q(unsubscribed_at__isnull=False))
+            normalized_filter_key = "unsubscribed"
+
+        # 3. Server-Side Search Filter
+        search_query = request.query_params.get("search", "").strip()
+        if search_query:
+            qs = qs.filter(
+                Q(email__icontains=search_query) |
+                Q(order_id__icontains=search_query) |
+                Q(discount_code__icontains=search_query) |
+                Q(contact__first_name__icontains=search_query) |
+                Q(contact__last_name__icontains=search_query)
+            )
+            total_filtered_count = qs.count()
+        else:
+            # Re-use pre-calculated count without extra database count query
+            total_filtered_count = status_counts.get(normalized_filter_key, status_counts["all"])
+
+        # 4. Ordering
+        ordering = request.query_params.get("ordering")
+        if ordering:
+            qs = qs.order_by(ordering)
+        else:
+            # Default ordering: Prioritize engaged recipients (purchased, clicked, opened) first
+            qs = qs.order_by("-converted_at", "-order_total", "-checkout_started_count", "-add_to_cart_count", "-opened_at", "-id")
+
+        # 5. Pagination
+        try:
+            page = max(1, int(request.query_params.get("page", 1)))
+        except (ValueError, TypeError):
+            page = 1
+
+        try:
+            page_size = min(200, max(10, int(request.query_params.get("page_size", 50))))
+        except (ValueError, TypeError):
+            page_size = 50
+
+        offset = (page - 1) * page_size
+        paginated_recipients = qs[offset : offset + page_size]
+        total_pages = (total_filtered_count + page_size - 1) // page_size if total_filtered_count > 0 else 1
+
         return Response({
-            "results": CampaignRecipientSerializer(recipients, many=True).data,
+            "results": CampaignRecipientSerializer(paginated_recipients, many=True).data,
             "total_recipients": campaign.total_recipients,
+            "total_filtered": total_filtered_count,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "status_counts": status_counts,
         })
 
 
