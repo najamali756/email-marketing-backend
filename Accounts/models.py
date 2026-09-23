@@ -140,6 +140,7 @@ class Contact(TimeStampedModel):
     last_order_at = models.DateTimeField(blank=True, null=True)
     raw_data = models.JSONField(default=dict, blank=True)
     segments = models.ManyToManyField("EmailMarketing.EmailSegment", related_name="contacts", blank=True)
+    is_verified = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ("store", "email")
