@@ -34,7 +34,7 @@ urlpatterns = [
     url(r"^audiences/estimate$", AudienceEstimateView.as_view()),
     url(r"^campaigns$", EmailCampaignListCreateView.as_view()),
     url(r"^campaigns/stats$", EmailCampaignStatsView.as_view()),
-    url(r"^campaigns/(?P<pk>\d+)$", EmailCampaignDetailView.as_view()),
+    url(r"^campaigns/(?P<pk>\d+)/?$", EmailCampaignDetailView.as_view()),
     url(r"^campaigns/(?P<campaign_id>\d+)/buildAudience$", BuildCampaignAudienceView.as_view()),
     url(r"^campaigns/(?P<campaign_id>\d+)/send$", SendCampaignView.as_view()),
     url(r"^campaigns/(?P<campaign_id>\d+)/pause$", PauseCampaignView.as_view()),

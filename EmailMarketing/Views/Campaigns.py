@@ -1,6 +1,6 @@
 from django.core.cache import cache
 from rest_framework import status
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView
+from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 import logging
@@ -237,7 +237,7 @@ def recalculate_campaign_stats(campaign):
     return campaign
 
 
-class EmailCampaignDetailView(StoreAuthenticatedMixin, RetrieveUpdateAPIView):
+class EmailCampaignDetailView(StoreAuthenticatedMixin, RetrieveUpdateDestroyAPIView):
     serializer_class = EmailCampaignSerializer
 
     def get_queryset(self):
@@ -248,6 +248,22 @@ class EmailCampaignDetailView(StoreAuthenticatedMixin, RetrieveUpdateAPIView):
         recalculate_campaign_stats(instance)
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        status_val = str(instance.status or '').strip().lower()
+        if status_val in ['sent', 'sending']:
+            return Response(
+                {'detail': 'Cannot delete a campaign that is already sent or currently sending.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        store_id = instance.store_id
+        self.perform_destroy(instance)
+        invalidate_campaign_cache(store_id)
+        return Response(
+            {'detail': 'Campaign deleted successfully.'},
+            status=status.HTTP_200_OK,
+        )
 
 
 class RecalculateCampaignStatsView(StoreAuthenticatedMixin, APIView):
