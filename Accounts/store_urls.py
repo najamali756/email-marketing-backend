@@ -8,11 +8,13 @@ from Accounts.views import (
     ContactSubscribeAllView,
     StoreDetailView,
     StoreListCreateView,
+    StoreRegenerateTokenView,
 )
 
 urlpatterns = [
     url(r"^$", StoreListCreateView.as_view()),
     url(r"^(?P<pk>\d+)$", StoreDetailView.as_view()),
+    url(r"^(?P<pk>\d+)/regenerate-token$", StoreRegenerateTokenView.as_view()),
     url(r"^contacts$", ContactListCreateView.as_view()),
     url(r"^contacts/uploadCsv$", ContactCsvUploadView.as_view()),
     url(r"^contacts/bulkUpsert$", ContactBulkUpsertView.as_view()),

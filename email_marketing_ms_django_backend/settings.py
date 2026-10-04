@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "Accounts",
     "EmailMarketing",
     "shopify_integration",
+    "automation",
 ]
 
 AUTH_USER_MODEL = "Accounts.User"

@@ -30,6 +30,8 @@ urlpatterns = [
     re_path(r"^stores/", include("Accounts.store_urls")),
     re_path(r"^emailMarketing/", include("EmailMarketing.urls")),
     path("shopify/", include("shopify_integration.urls")),
+    re_path(r"^automations/", include("automation.urls")),
+    path("api/automations/", include("automation.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 try:

@@ -32,6 +32,9 @@ class Store(TimeStampedModel):
     name = models.CharField(max_length=255)
     shop_url = models.CharField(max_length=500)
     api_key = models.CharField(max_length=64, unique=True, editable=False, blank=True, null=True)
+    third_party_token = models.CharField(max_length=128, unique=True, editable=False, blank=True, null=True)
+    callback_url = models.URLField(max_length=1000, blank=True, null=True)
+    source = models.CharField(max_length=50, default="shopify", blank=True, null=True)
     is_active = models.BooleanField(default=True)
 
     email_provider = models.CharField(max_length=50, default="sendgrid")
@@ -48,7 +51,14 @@ class Store(TimeStampedModel):
     def save(self, *args, **kwargs):
         if not self.api_key:
             self.api_key = secrets.token_hex(32)
+        if not self.third_party_token:
+            self.third_party_token = secrets.token_hex(32)
         super().save(*args, **kwargs)
+
+    def regenerate_third_party_token(self):
+        self.third_party_token = secrets.token_hex(32)
+        self.save(update_fields=["third_party_token", "updated_at"])
+        return self.third_party_token
 
     def __str__(self):
         return self.name

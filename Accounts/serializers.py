@@ -24,9 +24,12 @@ class StoreSerializer(serializers.ModelSerializer):
             "default_from_email",
             "default_from_name",
             "api_key",
+            "third_party_token",
+            "callback_url",
+            "source",
             "created_at",
         )
-        read_only_fields = ("api_key", "created_at")
+        read_only_fields = ("api_key", "third_party_token", "created_at")
 
 
 class StoreCreateSerializer(serializers.ModelSerializer):
@@ -38,6 +41,8 @@ class StoreCreateSerializer(serializers.ModelSerializer):
             "email_provider",
             "default_from_email",
             "default_from_name",
+            "callback_url",
+            "source",
         )
 
 

@@ -219,6 +219,33 @@ class StoreDetailView(ClientContextMixin, RetrieveUpdateDestroyAPIView):
             return [IsAuthenticated(), IsClientAdmin()]
         return [IsAuthenticated()]
 
+    def patch(self, request, *args, **kwargs):
+        if request.data.get("regenerate_token"):
+            store = self.get_object()
+            new_token = store.regenerate_third_party_token()
+            return Response({
+                "message": "Token regenerated successfully. Previous token has been expired.",
+                "third_party_token": new_token,
+                "store": StoreSerializer(store).data
+            })
+        return super().patch(request, *args, **kwargs)
+
+
+class StoreRegenerateTokenView(ClientContextMixin, APIView):
+    permission_classes = [IsAuthenticated, IsClientAdmin]
+
+    def post(self, request, pk):
+        store = Store.objects.filter(client=self.request.client, pk=pk).first()
+        if not store:
+            return Response({"error": "Store not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        new_token = store.regenerate_third_party_token()
+        return Response({
+            "message": "Token regenerated successfully. Previous token has been expired.",
+            "third_party_token": new_token,
+            "store": StoreSerializer(store).data
+        })
+
 
 class ContactListCreateView(StoreContextMixin, APIView):
     permission_classes = [HasStoreContext]
