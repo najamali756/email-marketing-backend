@@ -14,6 +14,7 @@ from shopify_integration.views import (
 from shopify_integration.webhooks import (
     ShopifyWebhookRegisterView,
     ShopifyWebhookReceiverView,
+    ShopifyWebhookManageView,
 )
 from shopify_integration.views_pixel import ShopifyPixelEventIngestionView
 
@@ -27,6 +28,7 @@ urlpatterns = [
     path('segments/<int:segment_id>/sync/', ShopifySingleSegmentSyncView.as_view(), name='shopify-single-segment-sync'),
     path('segments/create/', ShopifySegmentCreateView.as_view(), name='shopify-segments-create'),
     path('webhooks/register/', ShopifyWebhookRegisterView.as_view(), name='shopify-webhooks-register'),
+    path('webhooks/manage/', ShopifyWebhookManageView.as_view(), name='shopify-webhooks-manage'),
     path('webhooks/receiver/', ShopifyWebhookReceiverView.as_view(), name='shopify-webhooks-receiver'),
     path('events/track', ShopifyPixelEventIngestionView.as_view(), name='shopify-events-track'),
     re_path(r'^webhooks/customers/data_request/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-data-request'),

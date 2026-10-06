@@ -1,3 +1,4 @@
+import threading
 import hmac
 import hashlib
 import base64
@@ -14,6 +15,7 @@ from EmailMarketing.Views.base import StoreAuthenticatedMixin
 from Accounts.models import Store, Contact
 from EmailMarketing.models import EmailSegment
 from shopify_integration.models import ShopifySettings
+from automation.shopifyautomations import handle_shopify_automation_event
 from shopify_integration.sync import (
     fetch_segment_member_emails,
     get_valid_shopify_token,
@@ -333,4 +335,317 @@ class ShopifyWebhookReceiverView(APIView):
                 deleted_count, _ = EmailSegment.objects.filter(store=store, name=name).delete()
                 logger.info(f"[SHOPIFY WEBHOOK] Deleted segment '{name}' ({deleted_count} records removed)")
 
+        elif any(k in topic for k in ["ORDER", "CHECKOUT", "CART"]):
+            raw_topic = request.headers.get("X-Shopify-Topic", topic)
+            handle_shopify_automation_event(store, raw_topic, payload)
+            logger.info(f"[SHOPIFY WEBHOOK] Dispatched topic '{raw_topic}' to automation handler (Store: {store.name})")
+            return HttpResponse("Shopify automation webhook queued successfully", status=200)
+
         return HttpResponse("Webhook processed successfully", status=200)
+
+
+# ==============================================================================
+# AUTOMATION WEBHOOK MANAGEMENT (Orders, Checkouts, Carts)
+# ==============================================================================
+
+AUTOMATION_WEBHOOK_GROUPS = {
+    "orders": ["ORDERS_CREATE"],
+    "checkouts": ["CHECKOUTS_CREATE", "CHECKOUTS_UPDATE"],
+    "carts": ["CARTS_CREATE", "CARTS_UPDATE"],
+}
+
+
+def get_shopify_webhook_subscriptions(store):
+    """
+    Queries Shopify GraphQL API to list all active webhook subscriptions for this store.
+    Returns: list of dicts: [{'id': ..., 'topic': ..., 'callback_url': ...}]
+    """
+    settings_obj = ShopifySettings.objects.filter(store=store).first()
+    if not settings_obj or not settings_obj.shopify_access_token:
+        return []
+
+    active_token = get_valid_shopify_token(store) or settings_obj.shopify_access_token
+    shop_url = settings_obj.shop_url
+    gql_url = f"https://{shop_url}/admin/api/2023-04/graphql.json"
+
+    headers = {
+        "X-Shopify-Access-Token": active_token,
+        "Content-Type": "application/json",
+    }
+
+    list_query = """
+    {
+      webhookSubscriptions(first: 100) {
+        edges {
+          node {
+            id
+            topic
+            endpoint {
+              __typename
+              ... on WebhookHttpEndpoint {
+                callbackUrl
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    try:
+        resp = shopify_api_request("post", gql_url, store, headers=headers, json={"query": list_query})
+        if resp.status_code == 200:
+            edges = resp.json().get("data", {}).get("webhookSubscriptions", {}).get("edges", [])
+            subs = []
+            for edge in edges:
+                node = edge.get("node", {})
+                endpoint = node.get("endpoint") or {}
+                subs.append({
+                    "id": node.get("id"),
+                    "topic": node.get("topic"),
+                    "callback_url": endpoint.get("callbackUrl") if isinstance(endpoint, dict) else None,
+                })
+            return subs
+    except Exception as e:
+        logger.error(f"[SHOPIFY WEBHOOK LIST] Error listing webhooks for store {store.id}: {e}")
+    return []
+
+
+def get_shopify_webhook_status_summary(store):
+    """
+    Returns boolean status for each webhook group:
+    {
+        'customer': True/False,
+        'orders': True/False,
+        'checkouts': True/False,
+        'carts': True/False,
+        'active_topics': [...]
+    }
+    """
+    subs = get_shopify_webhook_subscriptions(store)
+    active_topics = set(s.get("topic") for s in subs if s.get("topic"))
+
+    customer_topics = set(SHOPIFY_WEBHOOK_TOPICS)
+    order_topics = set(AUTOMATION_WEBHOOK_GROUPS["orders"])
+    checkout_topics = set(AUTOMATION_WEBHOOK_GROUPS["checkouts"])
+    cart_topics = set(AUTOMATION_WEBHOOK_GROUPS["carts"])
+
+    return {
+        "customer": bool(customer_topics.intersection(active_topics)),
+        "orders": bool(order_topics.intersection(active_topics)),
+        "checkouts": bool(checkout_topics.intersection(active_topics)),
+        "carts": bool(cart_topics.intersection(active_topics)),
+        "active_topics": list(active_topics),
+    }
+
+
+def manage_shopify_automation_webhooks(store, webhook_type, action="toggle", custom_callback_url=None):
+    """
+    Subscribes or unsubscribes Shopify webhook groups:
+    - 'orders': ORDERS_CREATE
+    - 'checkouts': CHECKOUTS_CREATE, CHECKOUTS_UPDATE
+    - 'carts': CARTS_CREATE, CARTS_UPDATE
+    
+    action:
+    - 'subscribe': ensure topics are subscribed
+    - 'unsubscribe': delete subscriptions for these topics
+    - 'toggle': if any subscribed, unsubscribe them; if none subscribed, subscribe them.
+    """
+    webhook_type = (webhook_type or "").lower().strip()
+    if webhook_type in ["order", "orders"]:
+        group_key = "orders"
+    elif webhook_type in ["checkout", "checkouts"]:
+        group_key = "checkouts"
+    elif webhook_type in ["cart", "carts"]:
+        group_key = "carts"
+    else:
+        return False, f"Unsupported webhook type '{webhook_type}'. Supported: orders, checkouts, carts.", "error"
+
+    target_topics = AUTOMATION_WEBHOOK_GROUPS.get(group_key, [])
+    if not target_topics:
+        return False, f"No topics configured for type '{webhook_type}'.", "error"
+
+    settings_obj = ShopifySettings.objects.filter(store=store).first()
+    if not settings_obj or not settings_obj.shopify_access_token:
+        return False, "No Shopify integration configured for this store.", "error"
+
+    active_token = get_valid_shopify_token(store) or settings_obj.shopify_access_token
+    shop_url = settings_obj.shop_url
+    gql_url = f"https://{shop_url}/admin/api/2023-04/graphql.json"
+
+    backend_base = getattr(settings_conf, "BACKEND_BASE_URL", "").rstrip("/")
+    if not backend_base:
+        backend_base = "https://marketing-be.technogroves.com"
+    callback_url = custom_callback_url or f"{backend_base}/shopify/webhooks/receiver/"
+
+    headers = {
+        "X-Shopify-Access-Token": active_token,
+        "Content-Type": "application/json",
+    }
+
+    # Fetch existing subscriptions
+    existing_subs = get_shopify_webhook_subscriptions(store)
+    existing_by_topic = {s["topic"]: s["id"] for s in existing_subs if s.get("topic") in target_topics and s.get("id")}
+
+    is_currently_subscribed = len(existing_by_topic) > 0
+
+    # Determine desired action
+    should_unsubscribe = False
+    if action == "unsubscribe":
+        should_unsubscribe = True
+    elif action == "subscribe":
+        should_unsubscribe = False
+    else:  # toggle
+        should_unsubscribe = is_currently_subscribed
+
+    delete_mutation = """
+    mutation webhookSubscriptionDelete($id: ID!) {
+      webhookSubscriptionDelete(id: $id) {
+        deletedWebhookSubscriptionId
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+
+    create_mutation = """
+    mutation webhookSubscriptionCreate($topic: WebhookSubscriptionTopic!, $webhookSubscription: WebhookSubscriptionInput!) {
+      webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
+        userErrors {
+          field
+          message
+        }
+        webhookSubscription {
+          id
+          topic
+        }
+      }
+    }
+    """
+
+    if should_unsubscribe:
+        deleted_topics = []
+        errors = []
+        for topic, sub_id in existing_by_topic.items():
+            del_resp = shopify_api_request("post", gql_url, store, headers=headers, json={
+                "query": delete_mutation,
+                "variables": {"id": sub_id}
+            })
+            if del_resp.status_code == 200:
+                user_errors = del_resp.json().get("data", {}).get("webhookSubscriptionDelete", {}).get("userErrors", [])
+                if user_errors:
+                    errors.append(f"{topic}: {user_errors[0].get('message')}")
+                else:
+                    deleted_topics.append(topic)
+            else:
+                errors.append(f"{topic} HTTP {del_resp.status_code}")
+
+        if errors and not deleted_topics:
+            return False, f"Failed to unsubscribe {group_key} webhooks: {', '.join(errors)}", "unsubscribed"
+
+        return True, f"Successfully unsubscribed {group_key.capitalize()} webhooks ({', '.join(deleted_topics or target_topics)}).", "unsubscribed"
+
+    else:
+        registered_topics = []
+        errors = []
+        for topic in target_topics:
+            if topic in existing_by_topic:
+                registered_topics.append(topic)
+                continue
+
+            variables = {
+                "topic": topic,
+                "webhookSubscription": {
+                    "callbackUrl": callback_url,
+                    "format": "JSON"
+                }
+            }
+            res = shopify_api_request("post", gql_url, store, headers=headers, json={
+                "query": create_mutation,
+                "variables": variables
+            })
+            if res.status_code == 200:
+                res_json = res.json()
+                user_errors = res_json.get("data", {}).get("webhookSubscriptionCreate", {}).get("userErrors", [])
+                sub_info = res_json.get("data", {}).get("webhookSubscriptionCreate", {}).get("webhookSubscription")
+                if user_errors:
+                    raw_msg = user_errors[0].get("message", "")
+                    if "cannot create a webhook subscription with the specified topic" in raw_msg.lower():
+                        err_msg = (
+                            f"Missing Shopify Access Scope: Your Shopify App configuration is missing the required scopes for {topic}. "
+                            f"Please update your app scopes in your Shopify Partner Dashboard / Store Settings (e.g. read_orders, read_checkouts) "
+                            f"and re-authorize via 'OAuth Install & Connect'."
+                        )
+                    else:
+                        err_msg = f"{topic}: {raw_msg}"
+                    errors.append(err_msg)
+                elif sub_info:
+                    registered_topics.append(topic)
+            else:
+                errors.append(f"{topic} HTTP {res.status_code}")
+
+        if not registered_topics and errors:
+            return False, f"Failed to subscribe {group_key} webhooks: {', '.join(errors)}", "subscribed"
+
+        msg = f"Successfully subscribed {group_key.capitalize()} webhooks ({', '.join(registered_topics)})."
+        if errors:
+            msg += f" Note: {', '.join(errors)}"
+        return True, msg, "subscribed"
+
+
+class ShopifyWebhookManageView(StoreAuthenticatedMixin, APIView):
+    """
+    API for managing automation webhooks (Orders, Checkouts, Carts).
+    
+    GET /shopify/webhooks/manage/
+    Returns current status of webhook subscriptions for the store.
+    
+    POST /shopify/webhooks/manage/
+    Body params:
+      - type: 'orders' | 'checkouts' | 'carts'
+      - action: 'subscribe' | 'unsubscribe' | 'toggle' (default: 'toggle')
+    """
+    def get(self, request):
+        status_summary = get_shopify_webhook_status_summary(request.store)
+        return Response({
+            "status": "ok",
+            "subscriptions": status_summary
+        })
+
+    def post(self, request):
+        webhook_type = request.data.get("type")
+        action = request.data.get("action", "toggle")
+        custom_url = request.data.get("callback_url")
+
+        if not webhook_type:
+            return Response(
+                {"error": "Field 'type' is required (supported: 'orders', 'checkouts', 'carts')."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        success, message, action_performed = manage_shopify_automation_webhooks(
+            request.store,
+            webhook_type=webhook_type,
+            action=action,
+            custom_callback_url=custom_url
+        )
+
+        updated_status = get_shopify_webhook_status_summary(request.store)
+
+        if success:
+            return Response({
+                "success": True,
+                "message": message,
+                "action": action_performed,
+                "type": webhook_type,
+                "subscriptions": updated_status
+            })
+        else:
+            return Response({
+                "success": False,
+                "error": message,
+                "action": action_performed,
+                "type": webhook_type,
+                "subscriptions": updated_status
+            }, status=status.HTTP_400_BAD_REQUEST)

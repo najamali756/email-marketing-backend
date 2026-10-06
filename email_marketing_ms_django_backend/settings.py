@@ -156,7 +156,7 @@ SENDGRID_PLATFORM_DOMAIN = os.environ.get("SENDGRID_PLATFORM_DOMAIN", "technogro
 SHOPIFY_API_KEY = os.environ.get("SHOPIFY_API_KEY", "")
 SHOPIFY_API_SECRET = os.environ.get("SHOPIFY_API_SECRET", "")
 SHOPIFY_SITE_URL = os.environ.get("SHOPIFY_SITE_URL", "https://marketing.technogroves.com/")
-SHOPIFY_APP_API_SCOPE = os.environ.get("SHOPIFY_APP_API_SCOPE", "read_customers,write_customers")
+SHOPIFY_APP_API_SCOPE = os.environ.get("SHOPIFY_APP_API_SCOPE", "read_customers,write_customers,read_orders,read_checkouts")
 
 
 
