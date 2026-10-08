@@ -252,7 +252,7 @@ def _shopify_automation_worker(store, topic, payload):
             )
 
             record_id = send_record.id
-            wait_seconds = int(os.environ.get("SHOPIFY_ABANDONED_WAIT_SECONDS", 100))  # 30 minutes default
+            wait_seconds = int(os.environ.get("SHOPIFY_ABANDONED_WAIT_SECONDS", 1800))  # 30 minutes default
             logger.info(f"[SHOPIFY AUTOMATION] Created waiting record #{record_id} for {customer_email}. Waiting {wait_seconds}s for order completion.")
             print(f"[SHOPIFY AUTOMATION] Abandoned checkout recorded (#{record_id}). Waiting 30 minutes for order completion ({customer_email})...")
 
