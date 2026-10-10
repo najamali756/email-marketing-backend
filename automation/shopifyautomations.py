@@ -144,17 +144,10 @@ def _shopify_automation_worker(store, topic, payload):
                 logger.warning(f"[SHOPIFY AUTOMATION] Order event has no customer email. Skipping email dispatch.")
                 return
 
-            # Step B: Find active order confirmation automation workflow
-            automation = (
-                Automation.objects.filter(store=store, is_active=True)
-                .filter(
-                    models.Q(external_name__iexact="orders/create")
-                    | models.Q(external_name__iexact="order_confirmation")
-                    | models.Q(external_name__icontains="order")
-                    | models.Q(name__icontains="order")
-                )
-                .first()
-            )
+            # Step B: Find active order confirmation automation by exact external_name
+            automation = Automation.objects.filter(
+                store=store, is_active=True, external_name="orders/create"
+            ).first()
 
             if not automation:
                 logger.info(f"[SHOPIFY AUTOMATION] No active order confirmation automation configured for store '{getattr(store, 'name', '')}'.")
@@ -221,20 +214,10 @@ def _shopify_automation_worker(store, topic, payload):
                 logger.info(f"[SHOPIFY AUTOMATION] Updated existing waiting checkout record #{existing_waiting.id} for {customer_email}.")
                 return
 
-            # Find active abandoned checkout / cart automation workflow
-            automation = (
-                Automation.objects.filter(store=store, is_active=True)
-                .filter(
-                    models.Q(external_name__iexact="checkouts/create")
-                    | models.Q(external_name__iexact="checkouts/update")
-                    | models.Q(external_name__iexact="carts/create")
-                    | models.Q(external_name__icontains="checkout")
-                    | models.Q(external_name__icontains="cart")
-                    | models.Q(name__icontains="abandoned")
-                    | models.Q(name__icontains="checkout")
-                )
-                .first()
-            )
+            # Find active abandoned checkout / cart automation (unified for both cart and checkout triggers)
+            automation = Automation.objects.filter(
+                store=store, is_active=True, external_name__in=["checkouts/create", "carts/create"]
+            ).first()
 
             if not automation:
                 logger.info(f"[SHOPIFY AUTOMATION] No active abandoned checkout automation found for store '{getattr(store, 'name', '')}'.")

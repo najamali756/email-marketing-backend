@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, re_path
 from automation.views import (
     AutomationOpenTrackingView,
     AutomationStatsView,
@@ -13,5 +13,5 @@ urlpatterns = [
     path("stats/", AutomationStatsView.as_view(), name="automation-stats"),
     path("history/", NotificationSendHistoryView.as_view(), name="automation-history"),
     path("trigger/", TriggerNotificationView.as_view(), name="automation-trigger"),
-    path("track/open/<str:token>/", AutomationOpenTrackingView.as_view(), name="automation-track-open"),
+    re_path(r"^track/open/?$", AutomationOpenTrackingView.as_view(), name="automation-track-open"),
 ]

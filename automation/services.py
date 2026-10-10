@@ -49,18 +49,7 @@ def notify_external_webhook(callback_url: str, payload: dict):
     thread.start()
 
 
-def get_base_backend_url(request=None) -> str:
-    """Returns base backend URL for open tracking beacon pixels."""
-    import os
-    env_public = getattr(settings, "PUBLIC_BACKEND_URL", None) or os.environ.get("PUBLIC_BACKEND_URL")
-    if env_public:
-        return env_public.rstrip("/")
-    if request:
-        return request.build_absolute_uri("/").rstrip("/")
-    return getattr(settings, "BACKEND_BASE_URL", "http://localhost:8000").rstrip("/")
-
-
-def dispatch_automation_email(notification_send_id: int, base_url: str = None):
+def dispatch_automation_email(notification_send_id: int):
     """
     Dispatches the automation email in a separate non-blocking daemon thread.
     Handles HTML rendering, open tracking beacon injection, EmailProvider delivery,
@@ -121,11 +110,10 @@ def dispatch_automation_email(notification_send_id: int, base_url: str = None):
             rendered_html = replace_variables(raw_html, variables)
 
             # 4. Inject 1x1 Open Tracking Beacon
-            backend_url = base_url or "http://localhost:8000"
-            pixel_url = f"{backend_url}/automations/track/open/{send_record.tracking_token}/"
+            pixel_url = f"https://marketing-be.technogroves.com/automations/track/open?token={send_record.tracking_token}"
             pixel_tag = (
-                f'<img src="{pixel_url}" width="1" height="1" border="0" alt="" '
-                f'style="width:1px!important;height:1px!important;border:0!important;margin:0!important;padding:0!important;opacity:0.01!important;" />'
+                f'<img src="{pixel_url}" alt="" width="1" height="1" border="0" '
+                f'style="display:block;width:1px!important;min-width:1px!important;height:1px!important;min-height:1px!important;border:0!important;margin:0!important;padding:0!important;outline:none!important;" />'
             )
 
             if "</body>" in rendered_html:

@@ -18,7 +18,6 @@ from automation.serializers import (
 )
 from automation.services import (
     dispatch_automation_email,
-    get_base_backend_url,
     notify_external_webhook,
 )
 
@@ -298,8 +297,7 @@ class TriggerNotificationView(APIView):
         )
 
         # 6. Entire email preparation, rendering, dispatch & webhook handled in background thread
-        base_url = get_base_backend_url(request)
-        dispatch_automation_email(send_record.id, base_url=base_url)
+        dispatch_automation_email(send_record.id)
 
         # 7. Non-blocking Immediate 200 OK Response
         return Response(
@@ -316,14 +314,44 @@ class TriggerNotificationView(APIView):
 class AutomationOpenTrackingView(APIView):
     """
     1x1 Transparent PNG Open Beacon Tracker.
-    GET /automations/track/open/<token>/
+    GET /automations/track/open?token=<tracking_token>
     """
     authentication_classes = []
     permission_classes = []
 
-    def get(self, request, token):
+    def get(self, request):
+        token = request.query_params.get("token") or request.GET.get("token")
         if token:
+            token = str(token).strip()
             try:
+                # 1. Anti-Bot / Anti-Scanner Check: Reject explicit prefetch requests
+                purpose = (
+                    request.headers.get("Purpose", "")
+                    or request.headers.get("Sec-Purpose", "")
+                    or request.headers.get("X-Purpose", "")
+                    or request.META.get("HTTP_X_PURPOSE", "")
+                ).lower()
+                if "prefetch" in purpose or "preview" in purpose:
+                    return self._pixel_response()
+
+                # 2. Reject known automated security bots / scanners
+                user_agent = (request.META.get("HTTP_USER_AGENT") or "").lower()
+                scanner_bots = [
+                    "barracuda",
+                    "proofpoint",
+                    "mimecast",
+                    "virustotal",
+                    "urlscan",
+                    "crawler",
+                    "spider",
+                    "headless",
+                    "python-requests",
+                    "curl",
+                    "wget",
+                ]
+                if any(bot in user_agent for bot in scanner_bots):
+                    return self._pixel_response()
+
                 record = (
                     NotificationSend.objects.select_related("automation", "store")
                     .filter(tracking_token=token)
@@ -331,9 +359,11 @@ class AutomationOpenTrackingView(APIView):
                 )
                 if record:
                     now = timezone.now()
+                    # Only mark as opened if not already opened
                     if not record.opened_at:
                         record.opened_at = now
-                        record.status = "Opened"
+                        if record.status in ["Sent", "Pending", "Waiting"]:
+                            record.status = "Opened"
                         record.save(update_fields=["opened_at", "status", "updated_at"])
 
                         if (
@@ -362,12 +392,16 @@ class AutomationOpenTrackingView(APIView):
             except Exception as exc:
                 logger.warning(f"Open tracking failed for token {token}: {exc}")
 
+        return self._pixel_response()
+
+    def head(self, request):
+        # HEAD requests are inspection probes - return headers without mutating status
+        return self._pixel_response()
+
+    def _pixel_response(self):
         response = HttpResponse(TRANSPARENT_1X1_PNG, content_type="image/png")
-        response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0, private"
         response["Pragma"] = "no-cache"
         response["Expires"] = "0"
         response["Access-Control-Allow-Origin"] = "*"
         return response
-
-    def head(self, request, token):
-        return self.get(request, token)
