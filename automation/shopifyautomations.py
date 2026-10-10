@@ -140,6 +140,55 @@ def _shopify_automation_worker(store, topic, payload):
                     logger.info(f"[SHOPIFY AUTOMATION] Order confirmed: Removed {deleted_count} waiting abandoned checkout notification(s) for {customer_email}")
                     print(f"[SHOPIFY AUTOMATION] Order confirmed! Removed {deleted_count} waiting abandoned checkout task(s) for {customer_email}")
 
+            # Step A2: Attribution check for Recovered Abandoned Checkout
+            if customer_email:
+                try:
+                    from django.utils import timezone
+                    now_str = timezone.now().isoformat()
+                    order_num = str(payload.get("order_number") or payload.get("name") or "")
+                    order_amt = str(payload.get("total_price") or payload.get("current_total_price") or "0.00")
+                    order_curr = str(payload.get("currency") or payload.get("presentment_currency") or "PKR")
+                    checkout_id_raw = str(payload.get("checkout_id") or payload.get("cart_token") or "")
+
+                    abandoned_q = models.Q(
+                        store=store,
+                        recipient_email__iexact=customer_email,
+                        status__in=["Sent", "Opened", "Clicked"],
+                    )
+                    if checkout_id_raw:
+                        abandoned_q |= models.Q(
+                            store=store,
+                            unique_key__icontains=checkout_id_raw,
+                            status__in=["Sent", "Opened", "Clicked"],
+                        )
+
+                    sent_abandoned = (
+                        NotificationSend.objects.filter(abandoned_q)
+                        .filter(automation__external_name__in=["checkouts/create", "carts/create"])
+                        .order_by("-created_at")
+                        .first()
+                    )
+
+                    if sent_abandoned:
+                        rec_vars = dict(sent_abandoned.variables or {})
+                        rec_vars["recovered_order_name"] = str(payload.get("name") or (f"#{order_num}" if order_num else ""))
+                        rec_vars["recovered_order_id"] = str(payload.get("id") or order_num)
+                        rec_vars["recovered_amount"] = order_amt
+                        rec_vars["recovered_currency"] = order_curr
+                        rec_vars["recovered_at"] = now_str
+
+                        sent_abandoned.status = "Recovered"
+                        sent_abandoned.variables = rec_vars
+                        sent_abandoned.save(update_fields=["status", "variables", "updated_at"])
+                        logger.info(
+                            f"[SHOPIFY AUTOMATION] 💰 RECOVERED CART! Marked #{sent_abandoned.id} as Recovered for {customer_email}. (Order: {rec_vars['recovered_order_name']}, Amount: {order_curr} {order_amt})"
+                        )
+                        print(
+                            f"[SHOPIFY AUTOMATION] 💰 RECOVERED CART! Marked #{sent_abandoned.id} as Recovered for {customer_email}. (Order: {rec_vars['recovered_order_name']}, Amount: {order_curr} {order_amt})"
+                        )
+                except Exception as rec_err:
+                    logger.warning(f"[SHOPIFY AUTOMATION] Attribution check warning: {rec_err}")
+
             if not customer_email:
                 logger.warning(f"[SHOPIFY AUTOMATION] Order event has no customer email. Skipping email dispatch.")
                 return

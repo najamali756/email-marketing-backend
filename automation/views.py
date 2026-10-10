@@ -98,15 +98,31 @@ class AutomationStatsView(APIView):
         # Single optimized aggregation for send metrics
         send_metrics = NotificationSend.objects.filter(store_id=store_id).aggregate(
             total_dispatched=models.Count("id"),
-            total_sent=models.Count("id", filter=models.Q(status__in=["Sent", "Opened", "Clicked"])),
-            total_opened=models.Count("id", filter=models.Q(status__in=["Opened", "Clicked"])),
+            total_sent=models.Count("id", filter=models.Q(status__in=["Sent", "Opened", "Clicked", "Recovered"])),
+            total_opened=models.Count("id", filter=models.Q(status__in=["Opened", "Clicked", "Recovered"])),
             total_failed=models.Count("id", filter=models.Q(status__in=["Failed", "Bounced"])),
+            total_recovered=models.Count("id", filter=models.Q(status="Recovered")),
         )
 
         total_dispatched = send_metrics.get("total_dispatched") or 0
         total_sent = send_metrics.get("total_sent") or 0
         total_opened = send_metrics.get("total_opened") or 0
         total_failed = send_metrics.get("total_failed") or 0
+        total_recovered = send_metrics.get("total_recovered") or 0
+
+        # Calculate recovered revenue from variables JSONField
+        recovered_sends = NotificationSend.objects.filter(store_id=store_id, status="Recovered").values_list("variables", flat=True)
+        total_recovered_revenue = 0.0
+        currency = "PKR"
+        for vars_dict in recovered_sends:
+            if isinstance(vars_dict, dict):
+                amt_str = vars_dict.get("recovered_amount") or "0"
+                try:
+                    total_recovered_revenue += float(str(amt_str).replace(",", ""))
+                except (ValueError, TypeError):
+                    pass
+                if vars_dict.get("recovered_currency"):
+                    currency = str(vars_dict.get("recovered_currency"))
 
         # Single optimized aggregation for automation counts
         workflow_metrics = Automation.objects.filter(store_id=store_id).aggregate(
@@ -119,14 +135,19 @@ class AutomationStatsView(APIView):
 
         open_rate = round((total_opened / total_dispatched) * 100, 1) if total_dispatched > 0 else 0.0
         sent_rate = round((total_sent / total_dispatched) * 100, 1) if total_dispatched > 0 else 0.0
+        recovery_rate = round((total_recovered / total_sent) * 100, 1) if total_sent > 0 else 0.0
 
         return Response({
             "total_dispatched": total_dispatched,
             "total_sent": total_sent,
             "total_opened": total_opened,
             "total_failed": total_failed,
+            "total_recovered": total_recovered,
+            "total_recovered_revenue": round(total_recovered_revenue, 2),
+            "currency": currency,
             "open_rate": open_rate,
             "sent_rate": sent_rate,
+            "recovery_rate": recovery_rate,
             "active_automations": active_automations,
             "total_automations": total_automations,
         })

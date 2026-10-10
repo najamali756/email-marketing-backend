@@ -11,9 +11,11 @@ class AutomationSourceEnum(Enum):
 
 class NotificationSendStatusEnum(Enum):
     pending = "Pending"
+    waiting = "Waiting"
     sent = "Sent"
     opened = "Opened"
     clicked = "Clicked"
+    recovered = "Recovered"
     failed = "Failed"
     bounced = "Bounced"
 
@@ -37,6 +39,22 @@ class Automation(TimeStampedModel):
             models.Index(fields=["store", "external_name"]),
             models.Index(fields=["store", "source"]),
         ]
+
+    @property
+    def recovered_amount(self):
+        return (self.variables or {}).get("recovered_amount")
+
+    @property
+    def recovered_order_name(self):
+        return (self.variables or {}).get("recovered_order_name")
+
+    @property
+    def recovered_at(self):
+        return (self.variables or {}).get("recovered_at")
+
+    @property
+    def recovered_currency(self):
+        return (self.variables or {}).get("recovered_currency", "PKR")
 
     def __str__(self):
         return f"{self.name} ({self.store.name})"
@@ -71,6 +89,22 @@ class NotificationSend(TimeStampedModel):
         if not self.tracking_token:
             self.tracking_token = uuid.uuid4().hex
         super().save(*args, **kwargs)
+
+    @property
+    def recovered_amount(self):
+        return (self.variables or {}).get("recovered_amount")
+
+    @property
+    def recovered_order_name(self):
+        return (self.variables or {}).get("recovered_order_name")
+
+    @property
+    def recovered_at(self):
+        return (self.variables or {}).get("recovered_at")
+
+    @property
+    def recovered_currency(self):
+        return (self.variables or {}).get("recovered_currency", "PKR")
 
     def __str__(self):
         return f"{self.recipient_email} - {self.status} ({self.created_at})"

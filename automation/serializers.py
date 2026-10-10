@@ -65,6 +65,10 @@ class AutomationDetailSerializer(serializers.ModelSerializer):
 class NotificationSendListSerializer(serializers.ModelSerializer):
     automation_name = serializers.CharField(source="automation.name", read_only=True, default="Custom / Unlinked")
     automation_id = serializers.IntegerField(source="automation.id", read_only=True, default=None)
+    recovered_amount = serializers.SerializerMethodField()
+    recovered_order_name = serializers.SerializerMethodField()
+    recovered_at = serializers.SerializerMethodField()
+    recovered_currency = serializers.SerializerMethodField()
 
     class Meta:
         model = NotificationSend
@@ -79,9 +83,25 @@ class NotificationSendListSerializer(serializers.ModelSerializer):
             "error_log",
             "sent_at",
             "opened_at",
+            "recovered_at",
+            "recovered_amount",
+            "recovered_order_name",
+            "recovered_currency",
             "tracking_token",
             "created_at",
         ]
+
+    def get_recovered_amount(self, obj):
+        return (obj.variables or {}).get("recovered_amount")
+
+    def get_recovered_order_name(self, obj):
+        return (obj.variables or {}).get("recovered_order_name")
+
+    def get_recovered_at(self, obj):
+        return (obj.variables or {}).get("recovered_at")
+
+    def get_recovered_currency(self, obj):
+        return (obj.variables or {}).get("recovered_currency", "PKR")
 
 
 class TriggerNotificationSerializer(serializers.Serializer):
