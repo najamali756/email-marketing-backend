@@ -349,7 +349,7 @@ class ShopifyWebhookReceiverView(APIView):
 # ==============================================================================
 
 AUTOMATION_WEBHOOK_GROUPS = {
-    "orders": ["ORDERS_CREATE"],
+    "orders": ["ORDERS_CREATE", "ORDERS_CANCELLED"],
     "checkouts": ["CHECKOUTS_CREATE", "CHECKOUTS_UPDATE"],
     "carts": ["CARTS_CREATE", "CARTS_UPDATE"],
 }

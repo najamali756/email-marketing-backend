@@ -18,6 +18,7 @@ class NotificationSendStatusEnum(Enum):
     recovered = "Recovered"
     failed = "Failed"
     bounced = "Bounced"
+    in_progress = "InProgress"
 
 
 class Automation(TimeStampedModel):

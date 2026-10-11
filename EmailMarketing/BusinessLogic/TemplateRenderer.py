@@ -30,6 +30,32 @@ class TemplateRenderer:
         if not content:
             return ""
 
+        # Dynamic Cart Loop Support
+        loop_pattern = re.compile(
+            r"<!--\s*DYNAMIC_CART_PRODUCTS_START(?:\s+([^>]*?))?\s*-->([\s\S]*?)<!--\s*DYNAMIC_CART_PRODUCTS_END\s*-->",
+            re.IGNORECASE,
+        )
+        def _replace_cart_loop(match):
+            inner_template = match.group(2)
+            line_items = (context or {}).get("line_items_data") or []
+            if not line_items:
+                return (context or {}).get("items_html") or ""
+
+            rendered_cards = []
+            for it in line_items:
+                card = inner_template
+                card = re.sub(r"\{\{\s*item_image\s*\}\}", it.get("image", ""), card)
+                card = re.sub(r"\{\{\s*item_title\s*\}\}", it.get("title", ""), card)
+                card = re.sub(r"\{\{\s*item_variant\s*\}\}", it.get("variant", ""), card)
+                card = re.sub(r"\{\{\s*(?:item_quantity|item_qty)\s*\}\}", str(it.get("quantity", "1")), card)
+                card = re.sub(r"\{\{\s*item_price\s*\}\}", it.get("formatted_price", ""), card)
+                card = re.sub(r"\{\{\s*(?:checkout_url|recovery_url|abandoned_checkout_url)\s*\}\}", (context or {}).get("abandoned_checkout_url", "#"), card)
+                card = re.sub(r"\{\{\s*row_bg\s*\}\}", "#f9fafb" if it.get("is_even") else "#ffffff", card)
+                rendered_cards.append(card)
+            return "\n".join(rendered_cards)
+
+        content = loop_pattern.sub(_replace_cart_loop, content)
+
         def replace(match):
             raw_expr = match.group(1).strip()
             parts = raw_expr.split("|")

@@ -197,3 +197,49 @@ analytics.subscribe("checkout_completed", (event) => {
     customer_email: customerEmail
   });
 });
+
+
+// --- BROWSE ABANDONMENT (SEPARATE ENDPOINT - ONLY SENDS IF EMAIL IS PRESENT) ---
+analytics.subscribe("product_viewed", async (event) => {
+  let customerEmail = null;
+
+  try {
+    customerEmail = await browser.localStorage.getItem("customer-email");
+  } catch (e) {}
+
+  if (!customerEmail && typeof init !== "undefined" && init?.data?.customer?.email) {
+    customerEmail = init.data.customer.email;
+  }
+
+  // Only share browse event if it contains email
+  if (!customerEmail) {
+    return;
+  }
+
+  const pv = event?.data?.productVariant || {};
+  const prod = pv.product || {};
+  const shopDomain = (typeof init !== "undefined" && init?.data?.shop?.myshopifyDomain)
+    ? init.data.shop.myshopifyDomain
+    : (window.location.hostname || "");
+
+  const browsePayload = {
+    email: customerEmail,
+    customer_email: customerEmail,
+    shop_domain: shopDomain,
+    product_id: String(prod.id || pv.id || ""),
+    product_title: prod.title || pv.title || "Viewed Product",
+    product_price: String(pv.price?.amount || "0.00"),
+    product_image: pv.image?.url || "",
+    product_url: prod.url || (typeof window !== "undefined" ? window.location.href : ""),
+  };
+
+  try {
+    await fetch("https://marketing-be.technogroves.com/automations/browse-abandonment/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(browsePayload),
+    });
+  } catch (err) {
+    console.warn("[OMNEXA PIXEL] Browse abandonment ping failed:", err);
+  }
+});

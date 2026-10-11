@@ -61,12 +61,56 @@ def extract_shopify_variables(payload, topic=""):
     # Checkout & Cart Recovery URL
     abandoned_url = payload.get("abandoned_checkout_url") or payload.get("landing_site") or ""
 
-    # Line items summary
+    # Line items extraction and dynamic HTML generator
     line_items = payload.get("line_items") or []
     item_titles = [item.get("title") for item in line_items if item.get("title")]
     items_summary = ", ".join(item_titles) if item_titles else "Your selected items"
 
+    line_items_data = []
+    for idx, it in enumerate(line_items):
+        title = it.get("title") or "Selected Product"
+        variant = it.get("variant_title") or ""
+        qty = str(it.get("quantity") or 1)
+        price_val = str(it.get("price") or "0.00")
+
+        # Resolve image
+        img = (
+            it.get("image_url")
+            or (it.get("image") if isinstance(it.get("image"), str) else (it.get("image") or {}).get("src"))
+            or (it.get("featured_image") or {}).get("url")
+            or ""
+        )
+        if not img:
+            img = "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=160&q=80"
+
+        is_even = (idx % 2 == 1)
+
+        line_items_data.append({
+            "title": title,
+            "variant": variant,
+            "quantity": qty,
+            "price": price_val,
+            "formatted_price": f"{currency} {price_val}",
+            "image": img,
+            "index": idx + 1,
+            "is_even": is_even,
+        })
+
+        # Explicit product browse extraction
+    p_title = str(payload.get("product_title") or "Selected Product")
+    p_img = str(payload.get("product_image") or "")
+    p_price = str(payload.get("product_price") or "0.00")
+    p_url = str(payload.get("product_url") or "")
+
     variables = {
+        "product_title": p_title,
+        "product_image": p_img,
+        "product_price": p_price,
+        "product_url": p_url,
+        "item_title": p_title,
+        "item_image": p_img,
+        "item_price": p_price,
+
         "first_name": first_name,
         "last_name": last_name,
         "customer_name": customer_name,
@@ -80,6 +124,8 @@ def extract_shopify_variables(payload, topic=""):
         "total_discounts": total_discounts,
         "currency": currency,
         "financial_status": str(payload.get("financial_status") or ""),
+        "cancel_reason": str(payload.get("cancel_reason") or "customer"),
+        "cancelled_at": str(payload.get("cancelled_at") or ""),
         "fulfillment_status": str(payload.get("fulfillment_status") or "unfulfilled"),
         "shipping_address": shipping_street,
         "shipping_city": shipping_city,
@@ -90,6 +136,7 @@ def extract_shopify_variables(payload, topic=""):
         "checkout_url": abandoned_url,
         "items_summary": items_summary,
         "items_count": str(len(line_items)),
+        "line_items_data": line_items_data,
     }
 
     # Pass all top-level primitives from Shopify payload as available variables
@@ -126,9 +173,47 @@ def _shopify_automation_worker(store, topic, payload):
         customer_email = variables.get("email") or variables.get("customer_email")
 
         # ----------------------------------------------------------------------
-        # CASE 1: ORDER CONFIRMATION / CREATION (orders/create)
+        # CASE 1: ORDER CANCELLATION (orders/cancelled)
         # ----------------------------------------------------------------------
-        if "order" in norm_topic:
+        if "cancel" in norm_topic:
+            if not customer_email:
+                logger.warning(f"[SHOPIFY AUTOMATION] Order cancellation event has no customer email. Skipping email dispatch.")
+                return
+
+            automation = Automation.objects.filter(
+                store=store, is_active=True, external_name="orders/cancelled"
+            ).first()
+
+            if not automation:
+                logger.info(f"[SHOPIFY AUTOMATION] No active order cancellation automation configured for store '{getattr(store, 'name', '')}'.")
+                print(f"[SHOPIFY AUTOMATION] No active order cancellation automation found for store '{getattr(store, 'name', '')}'.")
+                return
+
+            order_id = str(payload.get("id") or payload.get("order_number") or payload.get("name") or "")
+            unique_key = f"order_cancelled_{order_id}" if order_id else f"order_cancelled_{customer_email}"
+
+            if NotificationSend.objects.filter(store=store, unique_key=unique_key).exists():
+                logger.info(f"[SHOPIFY AUTOMATION] Order cancellation already recorded for {unique_key}. Skipping duplicate.")
+                print(f"[SHOPIFY AUTOMATION] Duplicate order cancellation {unique_key} detected. Skipping.")
+                return
+
+            send_record = NotificationSend.objects.create(
+                automation=automation,
+                store=store,
+                recipient_email=customer_email,
+                unique_key=unique_key,
+                variables=variables,
+                status="Pending",
+            )
+
+            logger.info(f"[SHOPIFY AUTOMATION] Dispatched order cancellation #{send_record.id} to {customer_email}")
+            print(f"[SHOPIFY AUTOMATION] Dispatched Order Cancellation #{send_record.id} to {customer_email} (Template: {automation.template_name or 'Default'})")
+            dispatch_automation_email(send_record.id)
+
+        # ----------------------------------------------------------------------
+        # CASE 2: ORDER CONFIRMATION / CREATION (orders/create)
+        # ----------------------------------------------------------------------
+        elif "order" in norm_topic:
             # Step A: Delete any waiting abandoned checkout tasks for this customer
             if customer_email:
                 deleted_count, _ = NotificationSend.objects.filter(
@@ -227,29 +312,26 @@ def _shopify_automation_worker(store, topic, payload):
             dispatch_automation_email(send_record.id)
 
         # ----------------------------------------------------------------------
-        # CASE 2: CHECKOUT / CART ABANDONED (checkouts/create, checkouts/update, carts/create)
+        # CASE 3: CHECKOUT / CART ABANDONED (checkouts/create, carts/create)
         # ----------------------------------------------------------------------
         elif "checkout" in norm_topic or "cart" in norm_topic:
             if not customer_email:
                 logger.info(f"[SHOPIFY AUTOMATION] Checkout/Cart event has no email address yet. Skipping.")
-                print(f"[SHOPIFY AUTOMATION] Checkout/Cart event has no customer email yet. Waiting for email entry.")
                 return
 
             checkout_id = str(payload.get("id") or payload.get("token") or payload.get("cart_token") or "")
             unique_key = f"checkout_{checkout_id}" if checkout_id else f"checkout_{customer_email}"
 
-            # Don't send if already sent for this checkout
             already_sent = NotificationSend.objects.filter(
                 store=store,
                 recipient_email__iexact=customer_email,
                 unique_key=unique_key,
-                status__in=["Sent", "Opened", "Clicked"],
+                status__in=["Sent", "Opened", "Clicked", "InProgress"],
             ).exists()
             if already_sent:
-                logger.info(f"[SHOPIFY AUTOMATION] Abandoned notification already sent for {unique_key}. Skipping.")
+                logger.info(f"[SHOPIFY AUTOMATION] Abandoned notification already sent/processing for {unique_key}. Skipping.")
                 return
 
-            # Check if there is already a waiting record for this customer
             existing_waiting = NotificationSend.objects.filter(
                 store=store,
                 recipient_email__iexact=customer_email,
@@ -257,23 +339,19 @@ def _shopify_automation_worker(store, topic, payload):
             ).first()
 
             if existing_waiting:
-                # Update with latest cart contents and continue waiting
                 existing_waiting.variables = variables
                 existing_waiting.save(update_fields=["variables", "updated_at"])
                 logger.info(f"[SHOPIFY AUTOMATION] Updated existing waiting checkout record #{existing_waiting.id} for {customer_email}.")
                 return
 
-            # Find active abandoned checkout / cart automation (unified for both cart and checkout triggers)
             automation = Automation.objects.filter(
                 store=store, is_active=True, external_name__in=["checkouts/create", "carts/create"]
             ).first()
 
             if not automation:
                 logger.info(f"[SHOPIFY AUTOMATION] No active abandoned checkout automation found for store '{getattr(store, 'name', '')}'.")
-                print(f"[SHOPIFY AUTOMATION] No active abandoned checkout automation configured for store '{getattr(store, 'name', '')}'.")
                 return
 
-            # Create NotificationSend record with status="Waiting"
             send_record = NotificationSend.objects.create(
                 automation=automation,
                 store=store,
@@ -282,35 +360,61 @@ def _shopify_automation_worker(store, topic, payload):
                 variables=variables,
                 status="Waiting",
             )
+            logger.info(f"[SHOPIFY AUTOMATION] Abandoned checkout recorded #{send_record.id} for {customer_email}. Queued in Waiting status.")
+            print(f"[SHOPIFY AUTOMATION] Abandoned checkout recorded (#{send_record.id}) for {customer_email}. Queued in Waiting status (No sleep).")
+            return
 
-            record_id = send_record.id
-            wait_seconds = int(os.environ.get("SHOPIFY_ABANDONED_WAIT_SECONDS", 1800))  # 30 minutes default
-            logger.info(f"[SHOPIFY AUTOMATION] Created waiting record #{record_id} for {customer_email}. Waiting {wait_seconds}s for order completion.")
-            print(f"[SHOPIFY AUTOMATION] Abandoned checkout recorded (#{record_id}). Waiting 30 minutes for order completion ({customer_email})...")
-
-            # Wait 30 minutes
-            time.sleep(wait_seconds)
-
-            # Re-check database after 30 minutes
-            try:
-                close_old_connections()
-            except Exception:
-                pass
-
-            record_after_wait = NotificationSend.objects.filter(id=record_id).first()
-
-            if not record_after_wait:
-                # Row was deleted because an order was placed within the 30-min window!
-                logger.info(f"[SHOPIFY AUTOMATION] Record #{record_id} was deleted (order placed within 30 min). Abandoned email cancelled.")
-                print(f"[SHOPIFY AUTOMATION] Order was placed within 30 mins! Abandoned checkout #{record_id} successfully cancelled.")
+        # ----------------------------------------------------------------------
+        # CASE 4: BROWSE ABANDONMENT (browse/abandonment, browse)
+        # ----------------------------------------------------------------------
+        elif "browse" in norm_topic:
+            if not customer_email:
+                logger.info(f"[SHOPIFY AUTOMATION] Browse event has no email address. Skipping.")
                 return
 
-            if record_after_wait.status == "Waiting":
-                logger.info(f"[SHOPIFY AUTOMATION] 30 minutes elapsed without order for #{record_id}. Dispatching abandoned email to {customer_email}.")
-                print(f"[SHOPIFY AUTOMATION] 30 minutes elapsed with no order for #{record_id}! Dispatching abandoned checkout notification to {customer_email}.")
-                record_after_wait.status = "Pending"
-                record_after_wait.save(update_fields=["status", "updated_at"])
-                dispatch_automation_email(record_after_wait.id)
+            product_id = str(payload.get("product_id") or "")
+            unique_key = f"browse_{product_id}_{customer_email}" if product_id else f"browse_{customer_email}"
+
+            already_sent = NotificationSend.objects.filter(
+                store=store,
+                recipient_email__iexact=customer_email,
+                unique_key=unique_key,
+                status__in=["Sent", "Opened", "Clicked", "InProgress"],
+            ).exists()
+            if already_sent:
+                return
+
+            existing_waiting = NotificationSend.objects.filter(
+                store=store,
+                recipient_email__iexact=customer_email,
+                status="Waiting",
+            ).first()
+
+            if existing_waiting:
+                existing_waiting.variables = variables
+                existing_waiting.save(update_fields=["variables", "updated_at"])
+                logger.info(f"[SHOPIFY AUTOMATION] Updated existing waiting browse record #{existing_waiting.id} for {customer_email}.")
+                return
+
+            automation = Automation.objects.filter(
+                store=store, is_active=True, external_name__in=["browse_abandonment", "browse/abandonment"]
+            ).first()
+
+            if not automation:
+                logger.info(f"[SHOPIFY AUTOMATION] No active browse abandonment automation found for store '{getattr(store, 'name', '')}'.")
+                return
+
+            send_record = NotificationSend.objects.create(
+                automation=automation,
+                store=store,
+                recipient_email=customer_email,
+                unique_key=unique_key,
+                variables=variables,
+                status="Waiting",
+            )
+            logger.info(f"[SHOPIFY AUTOMATION] Browse abandonment recorded #{send_record.id} for {customer_email}. Queued in Waiting status.")
+            print(f"[SHOPIFY AUTOMATION] Browse abandonment recorded (#{send_record.id}) for {customer_email}. Queued in Waiting status (No sleep).")
+            return
 
     except Exception as e:
         logger.error(f"[SHOPIFY AUTOMATION] Error processing event '{topic}': {e}", exc_info=True)
@@ -337,4 +441,3 @@ def handle_shopify_automation_event(store, topic, payload):
         f"[SHOPIFY AUTOMATION] Started background thread for topic '{topic}' (Store: {getattr(store, 'name', '')})"
     )
     return thread
-

@@ -426,3 +426,57 @@ class AutomationOpenTrackingView(APIView):
         response["Expires"] = "0"
         response["Access-Control-Allow-Origin"] = "*"
         return response
+
+
+
+class BrowseAbandonmentEventView(APIView):
+    """
+    Storefront / Webhook endpoint to record a product browse event.
+    POST /automations/browse-abandonment/
+    Delegates directly to the unified handle_shopify_automation_event function.
+    """
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        data = request.data or {}
+        store_id = data.get("store_id")
+        shop_domain = data.get("shop_domain") or data.get("shop")
+        email = (data.get("email") or data.get("customer_email") or "").strip().lower()
+
+        if not email or (not store_id and not shop_domain):
+            return Response(
+                {"status": "error", "message": "email and (store_id or shop_domain) are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        store = None
+        if store_id:
+            store = Store.objects.filter(id=store_id, is_active=True).first()
+        if not store and shop_domain:
+            from shopify_integration.models import ShopifySettings
+            clean_shop = str(shop_domain).strip().lower().replace("https://", "").replace("http://", "").split("/")[0]
+            settings_obj = (
+                ShopifySettings.objects.filter(shop_url__icontains=clean_shop).first() or
+                ShopifySettings.objects.filter(shop_url=shop_domain).first()
+            )
+            if settings_obj:
+                store = settings_obj.store
+
+        if not store:
+            return Response(
+                {"status": "error", "message": "Store not found or inactive."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Delegate directly to the central Shopify automation handler
+        from automation.shopifyautomations import handle_shopify_automation_event
+        handle_shopify_automation_event(store, "browse/abandonment", data)
+
+        return Response(
+            {
+                "status": "queued",
+                "message": "Browse event received and queued in Waiting status.",
+            },
+            status=status.HTTP_200_OK,
+        )

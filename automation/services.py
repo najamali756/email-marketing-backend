@@ -13,10 +13,52 @@ logger = logging.getLogger(__name__)
 
 
 def replace_variables(text: str, variables: dict) -> str:
-    """Replaces {{ variable_name }} with corresponding value from variables dictionary."""
+    """
+    Replaces {{ variable_name }} and dynamic loops (<!-- DYNAMIC_CART_PRODUCTS_START --> ... <!-- DYNAMIC_CART_PRODUCTS_END -->)
+    with actual Shopify data (1, 5, 10, or 11 items).
+    """
     if not text or not variables:
         return text or ""
 
+    # 1. Process dynamic repeating cart products block
+    loop_pattern = re.compile(
+        r"<!--\s*DYNAMIC_CART_PRODUCTS_START(?:\s+([^>]*?))?\s*-->([\s\S]*?)<!--\s*DYNAMIC_CART_PRODUCTS_END\s*-->",
+        re.IGNORECASE,
+    )
+
+    def _replace_cart_loop(match):
+        attrs = match.group(1) or ""
+        inner_template = match.group(2)
+        line_items = variables.get("line_items_data") or []
+
+        if not line_items:
+            # Fallback to items_html or empty if no items
+            return variables.get("items_html") or ""
+
+        rendered_cards = []
+        for it in line_items:
+            card = inner_template
+            card = re.sub(r"\{\{\s*item_image\s*\}\}", it.get("image", ""), card)
+            card = re.sub(r"\{\{\s*item_title\s*\}\}", it.get("title", ""), card)
+            card = re.sub(r"\{\{\s*item_variant\s*\}\}", it.get("variant", ""), card)
+            card = re.sub(r"\{\{\s*(?:item_quantity|item_qty)\s*\}\}", str(it.get("quantity", "1")), card)
+            card = re.sub(r"\{\{\s*item_price\s*\}\}", it.get("formatted_price", ""), card)
+            card = re.sub(r"\{\{\s*item_raw_price\s*\}\}", str(it.get("price", "0.00")), card)
+            card = re.sub(r"\{\{\s*(?:checkout_url|recovery_url|abandoned_checkout_url)\s*\}\}", variables.get("abandoned_checkout_url", "#"), card)
+
+            # Alternate odd / even background colors
+            if it.get("is_even"):
+                card = re.sub(r"\{\{\s*row_bg\s*\}\}", "#f9fafb", card)
+            else:
+                card = re.sub(r"\{\{\s*row_bg\s*\}\}", "#ffffff", card)
+
+            rendered_cards.append(card)
+
+        return "\n".join(rendered_cards)
+
+    text = loop_pattern.sub(_replace_cart_loop, text)
+
+    # 2. Standard variable replacement {{ variable_name }}
     def _replace(match):
         var_name = match.group(1).strip()
         val = variables.get(var_name)
@@ -49,7 +91,7 @@ def notify_external_webhook(callback_url: str, payload: dict):
     thread.start()
 
 
-def dispatch_automation_email(notification_send_id: int):
+def dispatch_automation_email(notification_send_id: int, async_mode: bool = True):
     """
     Dispatches the automation email in a separate non-blocking daemon thread.
     Handles HTML rendering, open tracking beacon injection, EmailProvider delivery,
@@ -179,5 +221,10 @@ def dispatch_automation_email(notification_send_id: int):
             except Exception:
                 pass
 
-    thread = threading.Thread(target=_worker, daemon=True)
-    thread.start()
+    if async_mode:
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        return thread
+    else:
+        _worker()
+        return None
