@@ -1,3 +1,58 @@
+
+POPULAR_EMAIL_DOMAINS = {
+    # Google
+    "gmail.com", "googlemail.com",
+    # Microsoft
+    "hotmail.com", "hotmail.co.uk", "hotmail.fr", "hotmail.es", "hotmail.de", "hotmail.it",
+    "outlook.com", "outlook.co.uk", "outlook.fr", "outlook.de", "outlook.es",
+    "live.com", "live.co.uk", "live.fr", "msn.com", "passport.com",
+    # Yahoo
+    "yahoo.com", "yahoo.co.uk", "yahoo.ca", "yahoo.com.au", "yahoo.fr", "yahoo.de",
+    "yahoo.es", "yahoo.it", "yahoo.in", "ymail.com", "rocketmail.com",
+    # Apple
+    "icloud.com", "me.com", "mac.com",
+    # AOL
+    "aol.com", "aim.com", "aol.co.uk",
+    # Zoho
+    "zoho.com", "zohomail.com",
+    # Proton
+    "protonmail.com", "proton.me", "pm.me",
+    # Mail.com & GMX
+    "mail.com", "email.com", "usa.com", "gmx.com", "gmx.net", "gmx.de",
+    # Yandex
+    "yandex.com", "yandex.ru", "yandex.by", "yandex.kz",
+    # Fastmail
+    "fastmail.com", "fastmail.fm",
+    # Major ISPs / Telcos
+    "comcast.net", "sbcglobal.net", "att.net", "verizon.net", "cox.net", "charter.net",
+    "bell.net", "rogers.com", "shaw.ca", "btinternet.com", "virginmedia.com", "sky.com",
+    "t-online.de", "web.de", "freenet.de", "orange.fr", "free.fr", "sfr.fr", "laposte.net"
+}
+
+
+def is_valid_provider_email(email_str):
+    """
+    Validates that an email belongs to a top popular valid email provider (or provider subdomain).
+    Excludes unrecognized/arbitrary domains.
+    """
+    if not email_str or "@" not in email_str:
+        return False
+    parts = str(email_str).strip().lower().split("@")
+    if len(parts) != 2:
+        return False
+    domain = parts[1].strip()
+    if not domain or "." not in domain:
+        return False
+
+    if domain in POPULAR_EMAIL_DOMAINS:
+        return True
+
+    for pop in POPULAR_EMAIL_DOMAINS:
+        if domain.endswith("." + pop):
+            return True
+
+    return False
+
 import os
 import time
 import re
@@ -46,7 +101,7 @@ class BulkEmailSender:
         if specific_emails:
             contacts = Contact.objects.filter(store=campaign.store, email__in=specific_emails)
         elif target_all_contacts:
-            contacts = Contact.objects.filter(store=campaign.store, accept_email_marketing=True)
+            contacts = Contact.objects.filter(store=campaign.store )#accept_email_marketing=True
         elif segment_ids:
             segments = EmailSegment.objects.filter(id__in=segment_ids, store=campaign.store)
             for seg in segments:
@@ -63,15 +118,19 @@ class BulkEmailSender:
             EmailCampaignRecipient.objects.filter(campaign=campaign).values_list("contact_id", flat=True)
         )
 
+
         recipients = []
         for contact in contacts.iterator(chunk_size=500):
             if contact.id in existing_contact_ids or not contact.email:
+                continue
+            email_clean = contact.email.strip().lower()
+            if not is_valid_provider_email(email_clean):
                 continue
             recipients.append(
                 EmailCampaignRecipient(
                     campaign=campaign,
                     contact=contact,
-                    email=contact.email,
+                    email=email_clean,
                     status=EmailRecipientStatusEnum.pending.value,
                     personalization={
                         "first_name": contact.first_name or "",

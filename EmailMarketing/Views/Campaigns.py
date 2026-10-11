@@ -4,7 +4,9 @@ from rest_framework.generics import ListCreateAPIView, RetrieveUpdateAPIView, Re
 from rest_framework.response import Response
 from rest_framework.views import APIView
 import logging
-from EmailMarketing.BusinessLogic.BulkEmailSender import BulkEmailSender
+from EmailMarketing.BusinessLogic.BulkEmailSender import BulkEmailSender, is_valid_provider_email
+from EmailMarketing.BusinessLogic.threading_utils import spawn_thread
+from django.db import close_old_connections
 from EmailMarketing.models import EmailCampaign, EmailCampaignRecipient, EmailCampaignStatusEnum
 from EmailMarketing.Serializer.CampaignSerializer import (
     CampaignRecipientSerializer,
@@ -289,18 +291,38 @@ class BuildCampaignAudienceView(StoreAuthenticatedMixin, APIView):
 
         if segment_ids:
             campaign.segment_id = segment_ids[0]
-            campaign.save(update_fields=["segment_id", "updated_at"])
+        campaign.status = "creating_contacts"
+        campaign.save(update_fields=["segment_id", "status", "updated_at"] if segment_ids else ["status", "updated_at"])
 
-        total = BulkEmailSender(campaign.id).build_recipients(
-            segment_ids=segment_ids,
-            target_all_contacts=target_all_contacts,
-            specific_emails=specific_emails
-        )
+        def _async_build():
+            close_old_connections()
+            try:
+                total = BulkEmailSender(campaign.id).build_recipients(
+                    segment_ids=segment_ids,
+                    target_all_contacts=target_all_contacts,
+                    specific_emails=specific_emails
+                )
+                camp = EmailCampaign.objects.filter(id=campaign.id).first()
+                if camp:
+                    camp.status = EmailCampaignStatusEnum.draft.value
+                    camp.total_recipients = total
+                    camp.save(update_fields=["status", "total_recipients", "updated_at"])
+            except Exception as e:
+                logger.error(f"[BUILD AUDIENCE ERROR] Campaign {campaign.id}: {str(e)}", exc_info=True)
+                camp = EmailCampaign.objects.filter(id=campaign.id).first()
+                if camp:
+                    camp.status = EmailCampaignStatusEnum.draft.value
+                    camp.save(update_fields=["status", "updated_at"])
+            finally:
+                close_old_connections()
+
+        spawn_thread(f"build_audience_{campaign.id}", _async_build)
 
         return Response({
             "campaign_id": campaign.id,
-            "total_recipients": total,
-        })
+            "status": "creating_contacts",
+            "message": "Recipient sync in process, please wait to complete."
+        }, status=status.HTTP_200_OK)
 
 
 class SendCampaignView(StoreAuthenticatedMixin, APIView):
@@ -593,6 +615,8 @@ class UploadCampaignRecipientsView(StoreAuthenticatedMixin, APIView):
                 continue
                 
             email_lower = email_val.lower()
+            if not is_valid_provider_email(email_lower):
+                continue
             if email_lower in seen_emails:
                 duplicates_removed += 1
                 continue
