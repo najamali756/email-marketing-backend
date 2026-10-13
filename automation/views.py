@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from Accounts.models import Store
+from EmailMarketing.Views.base import StoreAuthenticatedMixin
 from automation.models import Automation, NotificationSend
 from automation.serializers import (
     AutomationDetailSerializer,
@@ -34,7 +35,7 @@ class StandardResultsSetPagination(PageNumberPagination):
     max_page_size = 100
 
 
-class AutomationViewSet(viewsets.ModelViewSet):
+class AutomationViewSet(StoreAuthenticatedMixin, viewsets.ModelViewSet):
     """
     CRUD endpoints for Automations.
     GET    /automations/?store_id=<id>&search=<query>&source=<source>
@@ -52,9 +53,13 @@ class AutomationViewSet(viewsets.ModelViewSet):
                 "sends", filter=models.Q(sends__status="Opened")
             ),
         )
-        store_id = self.request.query_params.get("store_id")
-        if store_id:
-            qs = qs.filter(store_id=store_id)
+        store = getattr(self.request, "store", None)
+        if store:
+            qs = qs.filter(store=store)
+        else:
+            store_id = self.request.query_params.get("store_id")
+            if store_id:
+                qs = qs.filter(store_id=store_id)
 
         source = self.request.query_params.get("source")
         if source and source != "all":
@@ -80,15 +85,23 @@ class AutomationViewSet(viewsets.ModelViewSet):
             return AutomationListSerializer
         return AutomationDetailSerializer
 
+    def perform_create(self, serializer):
+        store = getattr(self.request, "store", None)
+        if store:
+            serializer.save(store=store)
+        else:
+            serializer.save()
 
-class AutomationStatsView(APIView):
+
+class AutomationStatsView(StoreAuthenticatedMixin, APIView):
     """
     Aggregated statistical reports for the store automations dashboard.
     GET /automations/stats/?store_id=<id>
     """
 
     def get(self, request):
-        store_id = request.query_params.get("store_id")
+        store = getattr(request, "store", None)
+        store_id = store.id if store else request.query_params.get("store_id")
         if not store_id:
             return Response(
                 {"error": "store_id query param is required"},
@@ -153,14 +166,15 @@ class AutomationStatsView(APIView):
         })
 
 
-class NotificationSendHistoryView(APIView):
+class NotificationSendHistoryView(StoreAuthenticatedMixin, APIView):
     """
     Paginated, searchable notification history log datatable.
     GET /automations/history/?store_id=<id>&search=<query>&status=<status>&automation_id=<id>&page=1
     """
 
     def get(self, request):
-        store_id = request.query_params.get("store_id")
+        store = getattr(request, "store", None)
+        store_id = store.id if store else request.query_params.get("store_id")
         if not store_id:
             return Response(
                 {"error": "store_id query param is required"},
