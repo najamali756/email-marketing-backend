@@ -1,39 +1,64 @@
+import os
+import re
+import time
+import logging
 
-POPULAR_EMAIL_DOMAINS = {
-    # Google
-    "gmail.com", "googlemail.com",
-    # Microsoft
-    "hotmail.com", "hotmail.co.uk", "hotmail.fr", "hotmail.es", "hotmail.de", "hotmail.it",
-    "outlook.com", "outlook.co.uk", "outlook.fr", "outlook.de", "outlook.es",
-    "live.com", "live.co.uk", "live.fr", "msn.com", "passport.com",
-    # Yahoo
-    "yahoo.com", "yahoo.co.uk", "yahoo.ca", "yahoo.com.au", "yahoo.fr", "yahoo.de",
-    "yahoo.es", "yahoo.it", "yahoo.in", "ymail.com", "rocketmail.com",
-    # Apple
-    "icloud.com", "me.com", "mac.com",
-    # AOL
-    "aol.com", "aim.com", "aol.co.uk",
-    # Zoho
-    "zoho.com", "zohomail.com",
-    # Proton
-    "protonmail.com", "proton.me", "pm.me",
-    # Mail.com & GMX
-    "mail.com", "email.com", "usa.com", "gmx.com", "gmx.net", "gmx.de",
-    # Yandex
-    "yandex.com", "yandex.ru", "yandex.by", "yandex.kz",
-    # Fastmail
-    "fastmail.com", "fastmail.fm",
-    # Major ISPs / Telcos
-    "comcast.net", "sbcglobal.net", "att.net", "verizon.net", "cox.net", "charter.net",
-    "bell.net", "rogers.com", "shaw.ca", "btinternet.com", "virginmedia.com", "sky.com",
-    "t-online.de", "web.de", "freenet.de", "orange.fr", "free.fr", "sfr.fr", "laposte.net"
-}
+from django.conf import settings
+from django.core.cache import cache
+from django.db import close_old_connections
+from django.utils import timezone
+
+from Accounts.models import Contact
+from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
+from EmailMarketing.BusinessLogic.EmailProvider import EmailProvider
+from EmailMarketing.BusinessLogic.TemplateRenderer import TemplateRenderer
+from EmailMarketing.BusinessLogic.threading_utils import spawn_thread
+from EmailMarketing.models import (
+    EmailBrandSettings,
+    EmailCampaign,
+    EmailCampaignRecipient,
+    EmailCampaignStatusEnum,
+    EmailRecipientStatusEnum,
+    EmailSegment,
+)
+from shopify_integration.models import EmailVerifier, DEFAULT_VERIFIER_DOMAINS
+
+logger = logging.getLogger(__name__)
 
 
-def is_valid_provider_email(email_str):
+def get_allowed_email_domains(store=None):
     """
-    Validates that an email belongs to a top popular valid email provider (or provider subdomain).
-    Excludes unrecognized/arbitrary domains.
+    Fetches allowed domains from EmailVerifier model with caching.
+    Supports per-store verifier or fallback to DEFAULT_VERIFIER_DOMAINS.
+    """
+    store_id = getattr(store, "id", store) if store else None
+    cache_key = f"email_verifier_domains_{store_id}" if store_id else "email_verifier_domains"
+
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        verifier = None
+        if store_id:
+            verifier = EmailVerifier.objects.filter(store_id=store_id).first()
+        if not verifier:
+            verifier = EmailVerifier.objects.first()
+
+        if verifier and verifier.domains:
+            domains_set = set(verifier.domains)
+            cache.set(cache_key, domains_set, 300)
+            return domains_set
+    except Exception:
+        pass
+
+    return set(DEFAULT_VERIFIER_DOMAINS)
+
+
+def is_valid_provider_email(email_str, store=None):
+    """
+    Validates that an email belongs to an allowed provider domain (or provider subdomain).
+    Excludes unrecognized/arbitrary domains using EmailVerifier whitelist.
     """
     if not email_str or "@" not in email_str:
         return False
@@ -44,36 +69,16 @@ def is_valid_provider_email(email_str):
     if not domain or "." not in domain:
         return False
 
-    if domain in POPULAR_EMAIL_DOMAINS:
+    allowed_domains = get_allowed_email_domains(store)
+
+    if domain in allowed_domains:
         return True
 
-    for pop in POPULAR_EMAIL_DOMAINS:
+    for pop in allowed_domains:
         if domain.endswith("." + pop):
             return True
 
     return False
-
-import os
-import time
-import re
-from django.conf import settings
-from django.db import close_old_connections
-from django.utils import timezone
-
-from EmailMarketing.BusinessLogic.EmailProvider import EmailProvider
-from EmailMarketing.BusinessLogic.TemplateRenderer import TemplateRenderer
-from EmailMarketing.BusinessLogic.threading_utils import spawn_thread
-from EmailMarketing.models import (
-    EmailBrandSettings,
-    EmailCampaign,
-    EmailCampaignRecipient,
-    EmailCampaignStatusEnum,
-    EmailRecipientStatusEnum,
-)
-
-from Accounts.models import Contact
-from EmailMarketing.models import EmailSegment
-from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 
 
 class BulkEmailSender:

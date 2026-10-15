@@ -13,14 +13,39 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # ⚙️ AUTOMATION SCHEDULER & DISPATCHER (Master Process Runner)
 # ==============================================================================
-MAX_WORKERS = 2             # 2 parallel tasks at a time
-MAX_MEMORY_MB = 250         # 250 MB memory limit cap
+MAX_WORKERS = 2          # 2 parallel tasks at a time
+MAX_MEMORY_MB =0         # 250 MB memory limit
 CART_WAIT_MINUTES = 30      # 30 minutes wait for Abandoned Cart/Checkout
 BROWSE_WAIT_MINUTES = 60    # 60 minutes wait for Browse Abandonment
-BATCH_SIZE = 50             # Max batch per check
-CHECK_INTERVAL_SECONDS = 600 # Check DB every 60 seconds
+BATCH_SIZE = 30             # Max batch per check
+CHECK_INTERVAL_SECONDS = 60 # Check DB every 60 seconds
 # ==============================================================================
 
+
+def _get_current_memory_mb():
+    """Returns physical resident memory (RSS) consumed in Megabytes."""
+    try:
+        import resource, sys
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return rss / (1024 * 1024) if sys.platform == 'darwin' else rss / 1024
+    except Exception:
+        return 0.0
+
+def _ensure_django_ready():
+    """
+    Guarantees Django apps and settings are loaded before accessing models.
+    Critical when running in Gunicorn master process or daemon threads.
+    """
+    try:
+        from django.apps import apps
+        if not apps.ready:
+            import os
+            import django
+            if not os.environ.get('DJANGO_SETTINGS_MODULE'):
+                os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'email_marketing_ms_django_backend.settings')
+            django.setup()
+    except Exception as exc:
+        logger.error(f"[AUTOMATION SCHEDULER] Django initialization error: {exc}")
 
 def process_due_automations():
     """
@@ -28,6 +53,7 @@ def process_due_automations():
     Sets status to InProgress when picked up, then dispatches.
     """
     try:
+        _ensure_django_ready()
         from automation.models import NotificationSend
         from automation.services import dispatch_automation_email
 
@@ -54,7 +80,7 @@ def process_due_automations():
         if not due_records:
             return
 
-        print(f"[AUTOMATION SCHEDULER] 📬 Found {len(due_records)} due record(s). Processing up to {MAX_WORKERS} in parallel...")
+        print(f"[AUTOMATION SCHEDULER] 📬 Found {len(due_records)} due record(s). RAM: {_get_current_memory_mb():.1f}MB. Processing up to {MAX_WORKERS} in parallel...")
 
         # 1. Mark status as InProgress immediately to prevent duplicate parallel pickup
         ids_to_process = []
@@ -105,6 +131,8 @@ def start_automation_scheduler():
         return
     _scheduler_started = True
 
+    _ensure_django_ready()
+
     # Enforce 250 MB memory limit safely
     if MAX_MEMORY_MB > 0:
         try:
@@ -119,7 +147,7 @@ def start_automation_scheduler():
             logger.debug(f"Unable to set OS memory limit: {e}")
 
     def _loop():
-        print(f"[AUTOMATION SCHEDULER] 🚀 Started background scheduler (Workers: {MAX_WORKERS}, Interval: {CHECK_INTERVAL_SECONDS}s, Mem: {MAX_MEMORY_MB}MB)")
+        print(f"[AUTOMATION SCHEDULER] 🚀 Started background scheduler (Workers: {MAX_WORKERS}, Interval: {CHECK_INTERVAL_SECONDS}s, Current RAM: {_get_current_memory_mb():.1f}MB)")
         while True:
             try:
                 process_due_automations()

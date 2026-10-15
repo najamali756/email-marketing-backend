@@ -17,6 +17,7 @@ from shopify_integration.webhooks import (
     ShopifyWebhookManageView,
 )
 from shopify_integration.views_pixel import ShopifyPixelEventIngestionView
+from shopify_integration.views_email_verifier import EmailVerifierView
 
 urlpatterns = [
     path('settings/', ShopifySettingsView.as_view(), name='shopify-settings'),
@@ -31,6 +32,7 @@ urlpatterns = [
     path('webhooks/manage/', ShopifyWebhookManageView.as_view(), name='shopify-webhooks-manage'),
     path('webhooks/receiver/', ShopifyWebhookReceiverView.as_view(), name='shopify-webhooks-receiver'),
     path('events/track', ShopifyPixelEventIngestionView.as_view(), name='shopify-events-track'),
+    path('email-verifier/', EmailVerifierView.as_view(), name='shopify-email-verifier'),
     re_path(r'^webhooks/customers/data_request/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-data-request'),
     re_path(r'^webhooks/customers/redact/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-customer-redact'),
     re_path(r'^webhooks/shop/redact/?$', ShopifyWebhookView.as_view(), name='shopify-webhook-shop-redact'),
