@@ -46,9 +46,11 @@ class EmailVerifier(models.Model):
     """
     store = models.OneToOneField(Store, on_delete=models.CASCADE, related_name="email_verifier")
     domains = models.JSONField(default=list)
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"EmailVerifier ({len(self.domains or [])} domains)"
+        status = "Active" if self.is_active else "Disabled"
+        return f"EmailVerifier ({len(self.domains or [])} domains, {status})"
 

@@ -336,9 +336,12 @@ class ShopifyWebhookReceiverView(APIView):
                 logger.info(f"[SHOPIFY WEBHOOK] Deleted segment '{name}' ({deleted_count} records removed)")
 
         elif any(k in topic for k in ["ORDER", "CHECKOUT", "CART"]):
-            raw_topic = request.headers.get("X-Shopify-Topic", topic)
-            handle_shopify_automation_event(store, raw_topic, payload)
-            logger.info(f"[SHOPIFY WEBHOOK] Dispatched topic '{raw_topic}' to automation handler (Store: {store.name})")
+            try:
+                raw_topic = request.headers.get("X-Shopify-Topic", topic)
+                handle_shopify_automation_event(store, raw_topic, payload)
+                logger.info(f"[SHOPIFY WEBHOOK] Dispatched topic '{raw_topic}' to automation handler (Store: {store.name})")
+            except Exception as e:
+                logger.error(f"[SHOPIFY WEBHOOK ERROR] Error handling automation event: {e}", exc_info=True)
             return HttpResponse("Shopify automation webhook queued successfully", status=200)
 
         return HttpResponse("Webhook processed successfully", status=200)

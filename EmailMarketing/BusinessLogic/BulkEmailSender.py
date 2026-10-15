@@ -4,7 +4,6 @@ import time
 import logging
 
 from django.conf import settings
-from django.core.cache import cache
 from django.db import close_old_connections
 from django.utils import timezone
 
@@ -26,39 +25,68 @@ from shopify_integration.models import EmailVerifier, DEFAULT_VERIFIER_DOMAINS
 logger = logging.getLogger(__name__)
 
 
+def _extract_store_id(store):
+    """Safely resolves store ID integer from Store object, Campaign object, dict, int, or str."""
+    if store is None:
+        return None
+    if isinstance(store, int):
+        return store
+    if isinstance(store, str):
+        try:
+            return int(store)
+        except (ValueError, TypeError):
+            return None
+    if hasattr(store, "store_id") and store.store_id:
+        return store.store_id
+    if hasattr(store, "store") and store.store:
+        return getattr(store.store, "id", None)
+    return getattr(store, "id", None)
+
+
 def get_allowed_email_domains(store=None):
     """
-    Fetches allowed domains from EmailVerifier model with caching.
+    Fetches allowed domains directly from DB (no cache).
     Supports per-store verifier or fallback to DEFAULT_VERIFIER_DOMAINS.
     """
-    store_id = getattr(store, "id", store) if store else None
-    cache_key = f"email_verifier_domains_{store_id}" if store_id else "email_verifier_domains"
-
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
+    store_id = _extract_store_id(store)
+    if not store_id:
+        return set(DEFAULT_VERIFIER_DOMAINS)
 
     try:
-        verifier = None
-        if store_id:
-            verifier = EmailVerifier.objects.filter(store_id=store_id).first()
-        if not verifier:
-            verifier = EmailVerifier.objects.first()
-
+        verifier = EmailVerifier.objects.filter(store_id=store_id).first()
         if verifier and verifier.domains:
-            domains_set = set(verifier.domains)
-            cache.set(cache_key, domains_set, 300)
-            return domains_set
-    except Exception:
-        pass
+            return set(verifier.domains)
+    except Exception as exc:
+        logger.warning(f"[EMAIL VERIFIER] Failed fetching domains for store {store_id}: {exc}")
 
     return set(DEFAULT_VERIFIER_DOMAINS)
+
+
+def is_domain_verification_active(store=None):
+    """
+    Checks if domain whitelist verification is enabled for the specific store.
+    Direct DB query, ZERO cache to ensure instant reflection on toggle.
+    Defaults to True. If False, domain filtering is bypassed for this store/brand.
+    """
+    store_id = _extract_store_id(store)
+    if not store_id:
+        return True
+
+    try:
+        verifier = EmailVerifier.objects.filter(store_id=store_id).first()
+        if verifier is not None:
+            return bool(getattr(verifier, "is_active", True))
+    except Exception as exc:
+        logger.warning(f"[EMAIL VERIFIER] Failed checking is_active for store {store_id}: {exc}")
+
+    return True
 
 
 def is_valid_provider_email(email_str, store=None):
     """
     Validates that an email belongs to an allowed provider domain (or provider subdomain).
-    Excludes unrecognized/arbitrary domains using EmailVerifier whitelist.
+    Excludes unrecognized/arbitrary domains using EmailVerifier whitelist when active.
+    If is_active is False for this store/brand, validation is bypassed and email is allowed.
     """
     if not email_str or "@" not in email_str:
         return False
@@ -68,6 +96,10 @@ def is_valid_provider_email(email_str, store=None):
     domain = parts[1].strip()
     if not domain or "." not in domain:
         return False
+
+    # Check if verification is active for this brand/store (defaults to True)
+    if not is_domain_verification_active(store):
+        return True
 
     allowed_domains = get_allowed_email_domains(store)
 
@@ -129,7 +161,7 @@ class BulkEmailSender:
             if contact.id in existing_contact_ids or not contact.email:
                 continue
             email_clean = contact.email.strip().lower()
-            if not is_valid_provider_email(email_clean):
+            if not is_valid_provider_email(email_clean, store=campaign.store):
                 continue
             recipients.append(
                 EmailCampaignRecipient(

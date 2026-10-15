@@ -615,7 +615,7 @@ class UploadCampaignRecipientsView(StoreAuthenticatedMixin, APIView):
                 continue
                 
             email_lower = email_val.lower()
-            if not is_valid_provider_email(email_lower):
+            if not is_valid_provider_email(email_lower, store=campaign.store):
                 continue
             if email_lower in seen_emails:
                 duplicates_removed += 1
