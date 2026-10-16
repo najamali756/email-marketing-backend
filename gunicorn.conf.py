@@ -24,6 +24,6 @@ def when_ready(server):
     try:
         from automation.scheduler import start_automation_scheduler
         start_automation_scheduler()
-        logger.info("[GUNICORN MASTER] 🚀 Started automation scheduler in Master process.")
+        logger.info("GUNICORN MASTER Started automation scheduler in Master process.")
     except Exception as exc:
-        logger.error(f"[GUNICORN MASTER] ❌ Failed to start automation scheduler: {exc}")
+        logger.error(f"GUNICORN MASTER Failed to start automation scheduler: {exc}")
