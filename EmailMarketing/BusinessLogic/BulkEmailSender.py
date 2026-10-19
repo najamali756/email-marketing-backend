@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
 import os
 import re
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_store_id(store):
-    """Safely resolves store ID integer from Store object, Campaign object, dict, int, or str."""
+   
     if store is None:
         return None
     if isinstance(store, int):
@@ -58,7 +59,7 @@ def get_allowed_email_domains(store=None):
         if verifier and verifier.domains:
             return set(verifier.domains)
     except Exception as exc:
-        logger.warning(f"[EMAIL VERIFIER] Failed fetching domains for store {store_id}: {exc}")
+        logger.warning(f"EMAIL VERIFIER Failed fetching domains for store {store_id}: {exc}")
 
     return set(DEFAULT_VERIFIER_DOMAINS)
 
@@ -84,14 +85,7 @@ def is_domain_verification_active(store=None):
 
 
 def is_valid_provider_email(email_str, store=None, allowed_domains=None, is_active=None):
-    """
-    Validates that an email belongs to an allowed provider domain (or provider subdomain).
-    Excludes unrecognized/arbitrary domains using EmailVerifier whitelist when active.
-    If is_active is False for this store/brand, validation is bypassed and email is allowed.
-
-    Supports pre-fetched allowed_domains and is_active parameters to eliminate
-    redundant database queries during bulk processing.
-    """
+   
     if not email_str or "@" not in email_str:
         return False
     parts = str(email_str).strip().lower().split("@")
@@ -124,8 +118,10 @@ def is_valid_provider_email(email_str, store=None, allowed_domains=None, is_acti
 class BulkEmailSender:
     def __init__(self, campaign_id):
         self.campaign_id = campaign_id
-        self.batch_size = getattr(settings, "EMAIL_MARKETING_BATCH_SIZE", 100)
+        self.num_workers = getattr(settings, "EMAIL_MARKETING_WORKERS", 3)
+        self.batch_size = max(getattr(settings, "EMAIL_MARKETING_BATCH_SIZE", 100), 300)
         self.batch_sleep = getattr(settings, "EMAIL_MARKETING_BATCH_SLEEP", 0.5)
+        self.worker_sleep = getattr(settings, "EMAIL_MARKETING_WORKER_SLEEP", 0.22)
         self.public_url = getattr(settings, "EMAIL_MARKETING_PUBLIC_URL", "")
 
     def _load_campaign(self):
@@ -136,10 +132,7 @@ class BulkEmailSender:
         )
 
     def build_recipients(self, segment_ids=None, target_all_contacts=False, specific_emails=None):
-        """
-        Builds campaign recipients in memory-safe streaming batches.
-        Guarantees flat O(1) RAM usage (~25MB) and zero DB query explosion for 200k+ contacts.
-        """
+       
         close_old_connections()
 
         campaign = self._load_campaign()
@@ -197,10 +190,10 @@ class BulkEmailSender:
         processed_count = 0
         inserted_count = 0
 
-        logger.info(
-            f"[BULK EMAIL SENDER] Starting recipient build for Campaign {campaign.id} "
-            f"(Store: {getattr(campaign.store, 'id', None)}, Domain Check Active: {is_active})."
-        )
+        # logger.info(
+        #     f"[BULK EMAIL SENDER] Starting recipient build for Campaign {campaign.id} "
+        #     f"(Store: {getattr(campaign.store, 'id', None)}, Domain Check Active: {is_active})."
+        # )
 
         for contact in contacts.iterator(chunk_size=CHUNK_SIZE):
             processed_count += 1
@@ -279,6 +272,50 @@ class BulkEmailSender:
     def send_async(self):
         spawn_thread(f"email_campaign_{self.campaign_id}", self.send_in_batches)
 
+    def _send_recipient(
+        self,
+        recipient,
+        session,
+        brand_settings,
+        html_template,
+        raw_preview_text,
+        base_from_name,
+        campaign_subject,
+    ):
+        """Renders personalized email and dispatches it over persistent SMTP session."""
+        context = TemplateRenderer.build_contact_context(
+            recipient.contact,
+            brand_settings=brand_settings,
+            extra={
+                "unsubscribe_url": self._build_unsubscribe_url(recipient),
+                **(recipient.personalization or {}),
+            },
+        )
+        body = TemplateRenderer.render(html_template, context)
+        if raw_preview_text:
+            rendered_preview = TemplateRenderer.render(raw_preview_text, context)
+            if rendered_preview:
+                body = TemplateRenderer.inject_preview_text(body, rendered_preview)
+        body = self._instrument_html_body(body, recipient)
+        subject = TemplateRenderer.render(campaign_subject, context)
+        from_name = base_from_name
+        unsubscribe_url = self._build_unsubscribe_url(recipient)
+
+        try:
+            session.send(
+                to_email=recipient.email,
+                subject=subject,
+                html_body=body,
+                from_name=from_name,
+                unsubscribe_url=unsubscribe_url,
+            )
+            recipient.status = EmailRecipientStatusEnum.sent.value
+            recipient.sent_at = timezone.now()
+            recipient.error_message = None
+        except Exception as exc:
+            recipient.status = EmailRecipientStatusEnum.failed.value
+            recipient.error_message = str(exc)
+
     def send_in_batches(self):
         close_old_connections()
         campaign = self._load_campaign()
@@ -292,77 +329,94 @@ class BulkEmailSender:
         brand_settings = EmailBrandSettings.objects.filter(store=campaign.store).first()
         provider = EmailProvider(campaign.store)
         html_template = campaign.html_content or (campaign.template.html_content if campaign.template else "")
+        raw_preview_text = campaign.preview_text or (campaign.template.preview_text if campaign.template else "")
+        base_from_name = campaign.from_name or (brand_settings.default_from_name if brand_settings else None)
+        campaign_subject = campaign.subject
 
-        while True:
-            close_old_connections()
+        # Initialize persistent sessions (one per parallel worker, up to 500 emails per connection)
+        sessions = [provider.get_smtp_session(max_messages=500) for _ in range(self.num_workers)]
 
-            campaign.refresh_from_db()
-            if campaign.status in [EmailCampaignStatusEnum.cancelled.value, "Paused", "Cancelled"]:
-                print(f"[BULK EMAIL SENDER] Campaign {campaign.id} status is '{campaign.status}'. Stopping batch send loop.")
-                return
+        try:
+            while True:
+                close_old_connections()
 
-            batch = list(
-                EmailCampaignRecipient.objects.filter(
-                    campaign=campaign,
-                    status=EmailRecipientStatusEnum.pending.value,
-                )
-                .select_related("contact")
-                .order_by("id")[: self.batch_size]
-            )
-            if not batch:
-                break
+                campaign.refresh_from_db()
+                if campaign.status in [EmailCampaignStatusEnum.cancelled.value, "Paused", "Cancelled"]:
+                    print(f"[BULK EMAIL SENDER] Campaign {campaign.id} status is '{campaign.status}'. Stopping batch send loop.")
+                    return
 
-            for recipient in batch:
-                recipient.status = EmailRecipientStatusEnum.in_process.value
-                recipient.save(update_fields=["status", "updated_at"])
-
-                context = TemplateRenderer.build_contact_context(
-                    recipient.contact,
-                    brand_settings=brand_settings,
-                    extra={
-                        "unsubscribe_url": self._build_unsubscribe_url(recipient),
-                        **(recipient.personalization or {}),
-                    },
-                )
-                body = TemplateRenderer.render(html_template, context)
-                raw_preview_text = campaign.preview_text or (campaign.template.preview_text if campaign.template else "")
-                rendered_preview = TemplateRenderer.render(raw_preview_text, context)
-                if rendered_preview:
-                    body = TemplateRenderer.inject_preview_text(body, rendered_preview)
-                body = self._instrument_html_body(body, recipient)
-                subject = TemplateRenderer.render(campaign.subject, context)
-                from_name = campaign.from_name or (brand_settings.default_from_name if brand_settings else None)
-
-                try:
-                    provider.send(
-                        to_email=recipient.email,
-                        subject=subject,
-                        html_body=body,
-                        from_name=from_name,
-                        unsubscribe_url=self._build_unsubscribe_url(recipient),
+                batch = list(
+                    EmailCampaignRecipient.objects.filter(
+                        campaign=campaign,
+                        status=EmailRecipientStatusEnum.pending.value,
                     )
-                    recipient.status = EmailRecipientStatusEnum.sent.value
-                    recipient.sent_at = timezone.now()
-                    recipient.error_message = None
-                except Exception as exc:
-                    recipient.status = EmailRecipientStatusEnum.failed.value
-                    recipient.error_message = str(exc)
+                    .select_related("contact__store")
+                    .order_by("id")[: self.batch_size]
+                )
+                if not batch:
+                    break
 
-                recipient.save(update_fields=["status", "sent_at", "error_message", "updated_at"])
+                # Mark entire batch in_process with single fast query
+                for r in batch:
+                    r.status = EmailRecipientStatusEnum.in_process.value
+                EmailCampaignRecipient.objects.bulk_update(batch, ["status"], batch_size=len(batch))
 
-            campaign.sent_count = EmailCampaignRecipient.objects.filter(
-                campaign=campaign, status=EmailRecipientStatusEnum.sent.value
-            ).count()
-            campaign.failed_count = EmailCampaignRecipient.objects.filter(
-                campaign=campaign, status=EmailRecipientStatusEnum.failed.value
-            ).count()
-            campaign.skipped_count = EmailCampaignRecipient.objects.filter(
-                campaign=campaign, status=EmailRecipientStatusEnum.skipped.value
-            ).count()
-            campaign.save(update_fields=["sent_count", "failed_count", "skipped_count", "updated_at"])
+                # Partition batch evenly across the workers
+                chunks = [[] for _ in range(self.num_workers)]
+                for idx, recipient in enumerate(batch):
+                    chunks[idx % self.num_workers].append(recipient)
 
-            if self.batch_sleep:
-                time.sleep(self.batch_sleep)
+                def _worker_task(worker_idx, recipients_slice):
+                    session = sessions[worker_idx]
+                    for recipient in recipients_slice:
+                        self._send_recipient(
+                            recipient=recipient,
+                            session=session,
+                            brand_settings=brand_settings,
+                            html_template=html_template,
+                            raw_preview_text=raw_preview_text,
+                            base_from_name=base_from_name,
+                            campaign_subject=campaign_subject,
+                        )
+                        if self.worker_sleep > 0:
+                            time.sleep(self.worker_sleep)
+
+                # Send parallel across workers
+                with ThreadPoolExecutor(max_workers=self.num_workers) as executor:
+                    futures = [
+                        executor.submit(_worker_task, i, chunk)
+                        for i, chunk in enumerate(chunks)
+                        if chunk
+                    ]
+                    for future in as_completed(futures):
+                        future.result()
+
+                # Bulk update all recipients in batch (100 per SQL statement)
+                EmailCampaignRecipient.objects.bulk_update(
+                    batch,
+                    ["status", "sent_at", "error_message", "updated_at"],
+                    batch_size=100,
+                )
+
+                # Update live campaign counters
+                campaign.sent_count = EmailCampaignRecipient.objects.filter(
+                    campaign=campaign, status=EmailRecipientStatusEnum.sent.value
+                ).count()
+                campaign.failed_count = EmailCampaignRecipient.objects.filter(
+                    campaign=campaign, status=EmailRecipientStatusEnum.failed.value
+                ).count()
+                campaign.skipped_count = EmailCampaignRecipient.objects.filter(
+                    campaign=campaign, status=EmailRecipientStatusEnum.skipped.value
+                ).count()
+                campaign.save(update_fields=["sent_count", "failed_count", "skipped_count", "updated_at"])
+
+                if self.batch_sleep:
+                    time.sleep(self.batch_sleep)
+
+        finally:
+            # Cleanly close persistent SMTP sessions
+            for s in sessions:
+                s.close()
 
         self._finalize_campaign(campaign)
 

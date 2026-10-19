@@ -147,7 +147,7 @@ def start_automation_scheduler():
             logger.debug(f"Unable to set OS memory limit: {e}")
 
     def _loop():
-        print(f"[AUTOMATION SCHEDULER] 🚀 Started background scheduler (Workers: {MAX_WORKERS}, Interval: {CHECK_INTERVAL_SECONDS}s, Current RAM: {_get_current_memory_mb():.1f}MB)")
+        print(f"AUTOMATION SCHEDULER  Started background scheduler (Workers: {MAX_WORKERS}, Interval: {CHECK_INTERVAL_SECONDS}s, Current RAM: {_get_current_memory_mb():.1f}MB)")
         while True:
             try:
                 process_due_automations()
