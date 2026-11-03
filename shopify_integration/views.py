@@ -23,6 +23,7 @@ from shopify_integration.sync import (
     get_valid_shopify_token,
     shopify_api_request,
     sync_single_segment,
+    sync_single_segment_in_background,
     sync_segments,
 )
 from datetime import timedelta
@@ -325,18 +326,33 @@ class ShopifySyncTriggerView(StoreAuthenticatedMixin, APIView):
 class ShopifySingleSegmentSyncView(StoreAuthenticatedMixin, APIView):
     """
     POST /shopify/segments/<id>/sync/
-    Re-syncs matching member contacts for a single segment from Shopify GraphQL API.
+    Re-syncs matching member contacts for a single segment asynchronously in a background thread.
     """
     def post(self, request, segment_id):
-        segment = sync_single_segment(request.store, segment_id)
+        store = getattr(request, "store", None)
+        segment = None
+        if store:
+            segment = EmailSegment.objects.filter(store=store, id=segment_id).first()
         if not segment:
-            return Response({"error": "Segment not found or invalid Shopify credentials"}, status=status.HTTP_404_NOT_FOUND)
-            
+            segment = EmailSegment.objects.filter(id=segment_id).first()
+            if segment:
+                store = segment.store
+
+        if not segment or not store:
+            return Response(
+                {"error": "Segment not found or invalid credentials."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        sync_single_segment_in_background(store, segment_id)
+
         return Response({
-            "message": f"Successfully refreshed segment '{segment.name}'.",
+            "message": "Sync in progress",
+            "status": "processing",
+            "segment_id": segment_id,
+            "segment_name": segment.name,
             "cached_contact_count": segment.cached_contact_count,
-            "member_emails": segment.filter_config.get("member_emails", [])
-        })
+        }, status=status.HTTP_200_OK)
 
 
 class ShopifySegmentsSyncAllView(StoreAuthenticatedMixin, APIView):
@@ -427,15 +443,22 @@ class ShopifySegmentCreateView(StoreAuthenticatedMixin, APIView):
             segment_query = segment_node.get("query")
             
             
-            local_segment = EmailSegment.objects.create(
+            local_segment, _ = EmailSegment.objects.update_or_create(
                 store=request.store,
                 name=segment_name,
-                description=f"Shopify Segment Query: {segment_query}",
-                filter_config={
-                    "shopify_id": shopify_id,
-                    "shopify_query": segment_query
+                defaults={
+                    "description": f"Shopify Segment Query: {segment_query}",
+                    "filter_config": {
+                        "shopify_id": shopify_id,
+                        "shopify_query": segment_query
+                    }
                 }
             )
+            
+            try:
+                sync_single_segment_in_background(request.store, local_segment.id)
+            except Exception as sync_err:
+                logger.warning(f"Failed to trigger member sync for segment {local_segment.id}: {sync_err}")
             
             return Response({
                 "message": "Segment created successfully on Shopify.",

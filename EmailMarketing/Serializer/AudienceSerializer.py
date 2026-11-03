@@ -1,7 +1,8 @@
 from rest_framework import serializers
 
-from EmailMarketing.models import EmailSegment
 from Accounts.models import Contact
+from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
+from EmailMarketing.models import EmailSegment
 
 
 class EmailSegmentListSerializer(serializers.ModelSerializer):
@@ -39,11 +40,8 @@ class EmailSegmentDetailSerializer(serializers.ModelSerializer):
             "cached_contact_count", "members", "pagination", "created_at", "updated_at",
         )
 
-    def _get_emails_and_params(self, obj):
+    def _get_queryset_and_params(self, obj):
         request = self.context.get("request")
-        fc = obj.filter_config or {}
-        emails = fc.get("member_emails") or []
-
         try:
             page = int(request.GET.get("page", 1)) if request else 1
         except (ValueError, TypeError):
@@ -57,23 +55,22 @@ class EmailSegmentDetailSerializer(serializers.ModelSerializer):
         if page < 1:
             page = 1
 
-        total = len(emails)
+        qs = AudienceResolver(obj.store).resolve(obj.filter_config)
+        total = qs.count()
         total_pages = (total + page_size - 1) // page_size if total > 0 else 1
         offset = (page - 1) * page_size
-        page_emails = emails[offset:offset + page_size]
-        return emails, page_emails, page, page_size, total, total_pages
+        page_qs = qs[offset:offset + page_size]
+        return page_qs, page, page_size, total, total_pages
 
     def get_members(self, obj):
-        _, page_emails, _, _, _, _ = self._get_emails_and_params(obj)
-        if not page_emails:
-            return []
-        contacts = Contact.objects.filter(store=obj.store, email__in=page_emails).values(
+        page_qs, _, _, _, _ = self._get_queryset_and_params(obj)
+        contacts = page_qs.values(
             "id", "email", "first_name", "last_name", "total_orders", "total_spent", "accept_email_marketing"
         )
         return list(contacts)
 
     def get_pagination(self, obj):
-        _, _, page, page_size, total, total_pages = self._get_emails_and_params(obj)
+        _, page, page_size, total, total_pages = self._get_queryset_and_params(obj)
         return {
             "total": total,
             "page": page,

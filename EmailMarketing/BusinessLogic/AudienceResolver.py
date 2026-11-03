@@ -14,7 +14,7 @@ class AudienceResolver:
     def base_queryset(self):
         unsubscribed_emails = EmailUnsubscribe.objects.filter(store=self.store).values_list("email", flat=True)
         return (
-            Contact.objects.filter(store=self.store, accept_email_marketing=True)
+            Contact.objects.filter(store=self.store)
             .exclude(email="")
             .exclude(email__isnull=True)
             .exclude(email__in=unsubscribed_emails)
@@ -25,7 +25,7 @@ class AudienceResolver:
 
         member_emails = filter_config.get("member_emails") or []
         if member_emails:
-            queryset = queryset.filter(email__in=member_emails)
+            return queryset.filter(email__in=member_emails)
 
         tags = filter_config.get("tags") or []
         if tags:

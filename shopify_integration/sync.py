@@ -1,15 +1,24 @@
 import logging
 import threading
+import time
 from datetime import timedelta
 import requests
 from django.conf import settings as settings_conf
+from django.db import connection
 from django.db.models.signals import post_save
 from django.utils import timezone as django_timezone
 
 from Accounts.models import Contact
+from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 from EmailMarketing.models import EmailSegment
+from EmailMarketing.Views.Audiences import invalidate_segment_cache
 from shopify_integration.models import ShopifySettings
 from shopify_integration import signals
+
+_shopify_session = requests.Session()
+_adapter = requests.adapters.HTTPAdapter(max_retries=3, pool_connections=20, pool_maxsize=20)
+_shopify_session.mount("https://", _adapter)
+_shopify_session.mount("http://", _adapter)
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +71,23 @@ def refresh_shopify_token_now(store):
 
 
 def shopify_api_request(method, url, store, headers=None, **kwargs):
-    """Send a Shopify API request and retry once after a 401/403 token refresh."""
+    """Send a Shopify API request using persistent session pooling and retry on 401/403 or network drops."""
     request_headers = headers if headers is not None else {}
-    response = getattr(requests, method.lower())(url, headers=request_headers, **kwargs)
+    req_func = getattr(_shopify_session, method.lower(), _shopify_session.post)
 
-    if response.status_code not in (401, 403):
+    response = None
+    timeout = kwargs.pop("timeout", 45)
+    for attempt in range(3):
+        try:
+            response = req_func(url, headers=request_headers, timeout=timeout, **kwargs)
+            break
+        except Exception as conn_err:
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise conn_err
+
+    if response is None or response.status_code not in (401, 403):
         return response
 
     new_access_token = refresh_shopify_token_now(store)
@@ -79,14 +100,7 @@ def shopify_api_request(method, url, store, headers=None, **kwargs):
         return response
 
     request_headers["X-Shopify-Access-Token"] = new_access_token
-    retry_response = getattr(requests, method.lower())(url, headers=request_headers, **kwargs)
-    if retry_response.status_code in (401, 403):
-        logger.error(
-            "[SHOPIFY API] Request still returned HTTP %s after token refresh for store '%s'.",
-            retry_response.status_code,
-            getattr(store, "name", store),
-        )
-    return retry_response
+    return req_func(url, headers=request_headers, timeout=timeout, **kwargs)
 
 
 def get_valid_shopify_token(store):
@@ -213,6 +227,7 @@ def sync_customers(shop_url, access_token, store, full_resync=False, updated_at_
             break
 
     logger.info(f"[SHOPIFY SYNC] Finished customer sync. Total synced: {total_synced}")
+    update_store_segments_cache(store)
 
     try:
         post_save.connect(signals.sync_contact_marketing_update_to_shopify, sender=Contact)
@@ -222,9 +237,9 @@ def sync_customers(shop_url, access_token, store, full_resync=False, updated_at_
 
 def fetch_segment_member_emails(shop_url, access_token, shopify_id=None, shopify_query="", store=None):
     """
-    Queries Shopify GraphQL API using customerSegmentMembers(segmentId: $shopifyId)
-    to fetch matching customer emails for a given segment ID.
-    Also falls back to local DB evaluation of common segment query parameters.
+    Fetches the full list of member emails for a Shopify segment directly from
+    Shopify GraphQL API using customerSegmentMembers with cursor pagination,
+    connection pooling, automatic retry, and adaptive rate-limit throttling.
     """
     emails = []
 
@@ -238,9 +253,10 @@ def fetch_segment_member_emails(shop_url, access_token, shopify_id=None, shopify
         segment_gid = shopify_id if str(shopify_id).startswith("gid://") else f"gid://shopify/Segment/{shopify_id}"
 
         gql_query = """
-        query GetSegmentMembers($segmentId: ID!) {
-          customerSegmentMembers(first: 250, segmentId: $segmentId) {
+        query GetSegmentMembers($segmentId: ID!, $cursor: String) {
+          customerSegmentMembers(first: 250, segmentId: $segmentId, after: $cursor) {
             edges {
+              cursor
               node {
                 id
                 defaultEmailAddress {
@@ -248,47 +264,82 @@ def fetch_segment_member_emails(shop_url, access_token, shopify_id=None, shopify
                 }
               }
             }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
           }
         }
         """
 
-        try:
-            resp = shopify_api_request(
-                "post",
-                url,
-                store,
-                headers=headers,
-                json={"query": gql_query, "variables": {"segmentId": segment_gid}},
-            )
-            logger.info(f"[SHOPIFY SEGMENT MEMBERS] GID: '{segment_gid}' | Status: {resp.status_code}")
-            
-            if resp.status_code == 200:
-                res_data = resp.json()
-                edges = res_data.get("data", {}).get("customerSegmentMembers", {}).get("edges", [])
-                for edge in edges:
-                    node = edge.get("node", {})
-                    email_obj = node.get("defaultEmailAddress")
-                    email = email_obj.get("emailAddress") if isinstance(email_obj, dict) else None
-                    if email and email not in emails:
-                        emails.append(email)
-                logger.info(f"[SHOPIFY SEGMENT MEMBERS] Extracted {len(emails)} emails via GraphQL for GID {segment_gid}")
-        except Exception as err:
-            logger.error(f"[SHOPIFY SEGMENT MEMBERS] GraphQL fetch failed for {segment_gid}: {err}")
+        cursor = None
+        has_next = True
+        page_count = 0
+        MAX_PAGES = 160  # Supports up to 40,000 members per segment
 
-    if not emails and store and shopify_query:
-        logger.info(f"[SHOPIFY SEGMENT FALLBACK] Evaluating query '{shopify_query}' on store contacts...")
-        q_str = shopify_query.lower()
-        local_qs = Contact.objects.filter(store=store)
-        
-        if "number_of_orders >= 1" in q_str or "orders_count >= 1" in q_str or "purchased at least once" in q_str:
-            local_qs = local_qs.filter(total_orders__gte=1)
-        elif "number_of_orders = 0" in q_str or "orders_count = 0" in q_str or "first-time" in q_str:
-            local_qs = local_qs.filter(total_orders=0)
-        elif "subscribed" in q_str:
-            local_qs = local_qs.filter(accept_email_marketing=True)
+        while has_next and page_count < MAX_PAGES:
+            page_count += 1
+            res_data = None
 
-        emails = list(local_qs.values_list("email", flat=True))
-        logger.info(f"[SHOPIFY SEGMENT FALLBACK] Local query evaluation returned {len(emails)} emails")
+            for attempt in range(4):
+                try:
+                    resp = shopify_api_request(
+                        "post",
+                        url,
+                        store,
+                        headers=headers,
+                        json={
+                            "query": gql_query,
+                            "variables": {"segmentId": segment_gid, "cursor": cursor},
+                        },
+                        timeout=35,
+                    )
+                    if resp.status_code == 429:
+                        logger.warning(f"[SHOPIFY SEGMENT MEMBERS] Rate limited (429) on page {page_count}, sleeping 4s...")
+                        time.sleep(4)
+                        continue
+                    if resp.status_code != 200:
+                        logger.error(f"[SHOPIFY SEGMENT MEMBERS] GID {segment_gid} returned HTTP {resp.status_code}: {resp.text}")
+                        break
+
+                    res_data = resp.json()
+                    break
+                except Exception as err:
+                    logger.warning(f"[SHOPIFY SEGMENT MEMBERS] Page {page_count} attempt {attempt+1} failed: {err}. Retrying in 2.5s...")
+                    time.sleep(2.5)
+
+            if not res_data or "errors" in res_data:
+                if res_data and "errors" in res_data:
+                    logger.error(f"[SHOPIFY SEGMENT MEMBERS] GraphQL errors for GID {segment_gid}: {res_data['errors']}")
+                break
+
+            seg_data = res_data.get("data", {}).get("customerSegmentMembers", {})
+            edges = seg_data.get("edges", [])
+            for edge in edges:
+                node = edge.get("node", {})
+                email_obj = node.get("defaultEmailAddress")
+                email = email_obj.get("emailAddress") if isinstance(email_obj, dict) else None
+                if email and email not in emails:
+                    emails.append(email)
+
+            page_info = seg_data.get("pageInfo", {})
+            has_next = page_info.get("hasNextPage", False)
+            cursor = page_info.get("endCursor")
+            if not cursor or not edges:
+                break
+
+            # Adaptive rate throttling using Shopify GraphQL cost extensions
+            cost = res_data.get("extensions", {}).get("cost", {})
+            throttle = cost.get("throttleStatus", {})
+            available = throttle.get("currentlyAvailable", 1000)
+            restore_rate = throttle.get("restoreRate", 50)
+            if available < 250:
+                sleep_time = (300 - available) / restore_rate
+                time.sleep(max(sleep_time, 0.5))
+            else:
+                time.sleep(0.08)
+
+        logger.info(f"[SHOPIFY SEGMENT MEMBERS] Extracted {len(emails)} emails from Shopify for GID {segment_gid} across {page_count} pages")
 
     return emails
 
@@ -319,13 +370,29 @@ def sync_single_segment(store, segment_id):
         shopify_query=shopify_query, 
         store=store
     )
+
+    if member_emails:
+        existing_emails = set(
+            Contact.objects.filter(store=store, email__in=member_emails).values_list("email", flat=True)
+        )
+        missing_emails = [e for e in member_emails if e not in existing_emails]
+        if missing_emails:
+            new_contacts = [Contact(store=store, email=e, accept_email_marketing=True) for e in missing_emails]
+            Contact.objects.bulk_create(new_contacts, ignore_conflicts=True)
+
+    fc = {
+        "shopify_id": shopify_id,
+        "shopify_query": shopify_query,
+        "member_emails": member_emails,
+    }
     segment.cached_contact_count = len(member_emails)
-    segment.filter_config["member_emails"] = member_emails
+    segment.filter_config = fc
     segment.save()
 
     matching_contacts = Contact.objects.filter(store=store, email__in=member_emails)
     segment.contacts.set(matching_contacts)
-    logger.info(f"[SHOPIFY SINGLE SEGMENT] Refreshed segment '{segment.name}' with {matching_contacts.count()} linked contact DB records")
+    logger.info(f"[SHOPIFY SINGLE SEGMENT] Refreshed segment '{segment.name}' with {len(member_emails)} Shopify member emails")
+    invalidate_segment_cache(store.id)
 
     return segment
 
@@ -391,17 +458,27 @@ def sync_segments(shop_url, access_token, store, full_resync=False):
                 store=store
             )
 
+            if member_emails:
+                existing_emails = set(
+                    Contact.objects.filter(store=store, email__in=member_emails).values_list("email", flat=True)
+                )
+                missing_emails = [e for e in member_emails if e not in existing_emails]
+                if missing_emails:
+                    new_contacts = [Contact(store=store, email=e, accept_email_marketing=True) for e in missing_emails]
+                    Contact.objects.bulk_create(new_contacts, ignore_conflicts=True)
+
+            fc = {
+                "shopify_id": shopify_id,
+                "shopify_query": shopify_query,
+                "member_emails": member_emails,
+            }
             segment, _ = EmailSegment.objects.update_or_create(
                 store=store,
                 name=name,
                 defaults={
                     "description": f"Shopify Segment Query: {shopify_query}",
                     "cached_contact_count": len(member_emails),
-                    "filter_config": {
-                        "shopify_id": shopify_id,
-                        "shopify_query": shopify_query,
-                        "member_emails": member_emails,
-                    },
+                    "filter_config": fc,
                 },
             )
 
@@ -419,6 +496,39 @@ def sync_customers_and_segments(shop_url, access_token, store):
     sync_segments(shop_url, active_token, store)
 
 
+def update_store_segments_cache(store):
+    """
+    Quickly updates cached_contact_count for all segments of a store.
+    Evaluates fast local queries in < 15ms.
+    """
+    try:
+        segments = EmailSegment.objects.filter(store=store)
+        for seg in segments:
+            seg.cached_contact_count = AudienceResolver(store).count(seg.filter_config)
+            seg.save(update_fields=["cached_contact_count"])
+        logger.info(f"[SEGMENT CACHE AUTO-UPDATE] Updated {segments.count()} segments for store '{store.name}'")
+    except Exception as e:
+        logger.warning(f"[SEGMENT CACHE AUTO-UPDATE] Failed for store {store}: {e}")
+
+
+def _sync_single_segment_worker(store, segment_id):
+    try:
+        sync_single_segment(store, segment_id)
+    except Exception as e:
+        logger.error(f"[SHOPIFY SINGLE SEGMENT BACKGROUND] Error syncing segment {segment_id}: {e}")
+    finally:
+        connection.close()
+
+
+def sync_single_segment_in_background(store, segment_id):
+    thread = threading.Thread(
+        target=_sync_single_segment_worker,
+        args=(store, segment_id),
+        daemon=True
+    )
+    thread.start()
+
+
 def sync_customers_in_background(shop_url, access_token, store, full_resync=False, updated_at_min=None):
     thread = threading.Thread(
         target=sync_customers,
@@ -432,7 +542,7 @@ def sync_customers_in_background(shop_url, access_token, store, full_resync=Fals
 def update_customer_marketing_on_shopify(shop_url, access_token, store, external_id, accepts_marketing):
     """
     Directly updates customer email_marketing_consent parameter inside Shopify.
-    Handles Shopify REST API requirements and payload fallbacks cleanly.
+    Handles Shopify REST API requirements cleanly.
     """
     logger.info(f"[SHOPIFY UPDATE] Updating customer {external_id} accepts_marketing={accepts_marketing}...")
     active_token = get_valid_shopify_token(store) or access_token
@@ -443,15 +553,20 @@ def update_customer_marketing_on_shopify(shop_url, access_token, store, external
         "Content-Type": "application/json",
     }
 
+    accepts_marketing_bool = bool(accepts_marketing) and str(accepts_marketing).lower() not in ("false", "0")
+    # Note: Do not pass consent_updated_at as local clock skew can cause Shopify to reject with:
+    # "Consent updated at must not be in the future". Shopify auto-sets the server timestamp.
     payload_modern = {
         "customer": {
             "id": int(external_id),
             "email_marketing_consent": {
-                "state": "subscribed" if accepts_marketing else "unsubscribed",
-                "opt_in_level": "single_opt_in" if accepts_marketing else "single_opt_in",
+                "state": "subscribed" if accepts_marketing_bool else "unsubscribed",
+                "opt_in_level": "single_opt_in" if accepts_marketing_bool else "single_opt_in",
             },
         }
     }
+    target_state = payload_modern["customer"]["email_marketing_consent"]["state"]
+    logger.info(f"[SHOPIFY UPDATE] Customer {external_id} payload state: {target_state}")
 
     try:
         response = shopify_api_request("put", url, store, headers=headers, json=payload_modern)
@@ -460,8 +575,7 @@ def update_customer_marketing_on_shopify(shop_url, access_token, store, external
             payload_legacy = {
                 "customer": {
                     "id": int(external_id),
-                    "accepts_marketing": accepts_marketing,
-                    "accepts_marketing_updated_at": django_timezone.now().isoformat(),
+                    "accepts_marketing": accepts_marketing_bool,
                 }
             }
             response = shopify_api_request("put", url, store, headers=headers, json=payload_legacy)
@@ -470,8 +584,12 @@ def update_customer_marketing_on_shopify(shop_url, access_token, store, external
             res_json = response.json()
             updated_cust = res_json.get("customer")
             if updated_cust:
-                Contact.objects.filter(store=store, external_id=str(external_id)).update(raw_data=updated_cust)
-                logger.info(f"[SHOPIFY UPDATE] Refreshed raw_data for customer {external_id}")
+                Contact.objects.filter(store=store, external_id=str(external_id)).update(
+                    raw_data=updated_cust,
+                    accept_email_marketing=accepts_marketing_bool,
+                    accept_email_marketing_at=django_timezone.now() if accepts_marketing_bool else None,
+                )
+                logger.info(f"[SHOPIFY UPDATE] Successfully synced customer {external_id} to Shopify (state: {target_state})")
         else:
             logger.error(f"[SHOPIFY UPDATE] Failed to update customer {external_id}: {response.text}")
 

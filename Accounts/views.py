@@ -24,7 +24,17 @@ from Accounts.serializers import (
     build_client_access_list,
 )
 from Accounts.BusinessLogic.CsvContactImporter import CsvContactImporter
-from shopify_integration.sync import bulk_update_marketing_consent_shopify
+import logging
+
+from shopify_integration.models import ShopifySettings
+from shopify_integration.sync import (
+    bulk_update_marketing_consent_shopify,
+    get_valid_shopify_token,
+    shopify_api_request,
+    update_customer_marketing_on_shopify,
+)
+
+logger = logging.getLogger(__name__)
 from EmailMarketing.models import EmailSegment
 from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 
@@ -352,6 +362,67 @@ class ContactDetailView(StoreContextMixin, RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return Contact.objects.filter(store=self.request.store)
+
+    def perform_update(self, serializer):
+        marketing_in_data = (
+            "accept_email_marketing" in self.request.data
+            or "accept_email_marketing" in serializer.validated_data
+        )
+        raw_val = serializer.validated_data.get(
+            "accept_email_marketing",
+            self.request.data.get("accept_email_marketing", serializer.instance.accept_email_marketing),
+        )
+        new_marketing = bool(raw_val) and str(raw_val).lower() not in ("false", "0")
+
+        # Prevent duplicate background signal execution since we handle Shopify sync right here
+        serializer.instance._skip_shopify_sync = True
+
+        if marketing_in_data:
+            contact = serializer.save(
+                accept_email_marketing=new_marketing,
+                accept_email_marketing_at=timezone.now() if new_marketing else None,
+            )
+        else:
+            contact = serializer.save()
+
+        if marketing_in_data:
+            store = getattr(self.request, "store", None) or contact.store
+            external_id = contact.external_id
+            settings_obj = ShopifySettings.objects.filter(store=store).first()
+            if settings_obj and settings_obj.shopify_access_token:
+                active_token = get_valid_shopify_token(store) or settings_obj.shopify_access_token
+
+                # If external_id is missing, search Shopify customer by email
+                if not external_id and contact.email:
+                    try:
+                        search_url = f"https://{settings_obj.shop_url}/admin/api/2023-04/customers/search.json?query=email:{contact.email}"
+                        search_resp = shopify_api_request("get", search_url, store, headers={
+                            "X-Shopify-Access-Token": active_token,
+                            "Content-Type": "application/json",
+                        })
+                        if search_resp.status_code == 200:
+                            custs = search_resp.json().get("customers", [])
+                            if custs:
+                                external_id = str(custs[0].get("id"))
+                                contact.external_id = external_id
+                                contact.save(update_fields=["external_id"])
+                    except Exception as e:
+                        logger.warning(f"[SHOPIFY UPDATE] Could not resolve external_id for {contact.email}: {e}")
+
+                if external_id:
+                    update_customer_marketing_on_shopify(
+                        settings_obj.shop_url,
+                        active_token,
+                        store,
+                        external_id,
+                        new_marketing,
+                    )
+                    try:
+                        serializer.instance.refresh_from_db()
+                        if hasattr(serializer, "_data"):
+                            del serializer._data
+                    except Exception:
+                        pass
 
 
 class ContactBulkUpsertView(StoreContextMixin, APIView):

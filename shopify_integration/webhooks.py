@@ -13,6 +13,7 @@ from rest_framework.permissions import AllowAny
 
 from EmailMarketing.Views.base import StoreAuthenticatedMixin
 from Accounts.models import Store, Contact
+from EmailMarketing.BusinessLogic.AudienceResolver import AudienceResolver
 from EmailMarketing.models import EmailSegment
 from shopify_integration.models import ShopifySettings
 from automation.shopifyautomations import handle_shopify_automation_event
@@ -20,6 +21,7 @@ from shopify_integration.sync import (
     fetch_segment_member_emails,
     get_valid_shopify_token,
     shopify_api_request,
+    update_store_segments_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -294,6 +296,7 @@ class ShopifyWebhookReceiverView(APIView):
                 )
                 action = "created" if created else "updated"
                 logger.info(f"[SHOPIFY WEBHOOK] Customer {email} {action} in store {store.name}")
+                update_store_segments_cache(store)
 
         elif "SEGMENT" in topic and "DELETE" not in topic:
             shopify_id = payload.get("id")
@@ -310,17 +313,27 @@ class ShopifyWebhookReceiverView(APIView):
                     store=store
                 )
 
+                if member_emails:
+                    existing_emails = set(
+                        Contact.objects.filter(store=store, email__in=member_emails).values_list("email", flat=True)
+                    )
+                    missing_emails = [e for e in member_emails if e not in existing_emails]
+                    if missing_emails:
+                        new_contacts = [Contact(store=store, email=e, accept_email_marketing=True) for e in missing_emails]
+                        Contact.objects.bulk_create(new_contacts, ignore_conflicts=True)
+
+                fc = {
+                    "shopify_id": shopify_id,
+                    "shopify_query": shopify_query,
+                    "member_emails": member_emails,
+                }
                 segment, _ = EmailSegment.objects.update_or_create(
                     store=store,
                     name=name,
                     defaults={
                         "description": f"Shopify Segment Query: {shopify_query}",
                         "cached_contact_count": len(member_emails),
-                        "filter_config": {
-                            "shopify_id": shopify_id,
-                            "shopify_query": shopify_query,
-                            "member_emails": member_emails,
-                        },
+                        "filter_config": fc,
                     }
                 )
 
