@@ -14,6 +14,7 @@ from Accounts.views_external import (
     ExternalUserCreateView,
     ExternalGenerateTempTokenView,
     ExternalExchangeTempTokenView,
+    ExternalDashboardStatsView,
 )
 
 urlpatterns = [
@@ -30,4 +31,5 @@ urlpatterns = [
     url(r"^external/create-user/?$", ExternalUserCreateView.as_view(), name="external_create_user"),
     url(r"^external/generate-token/?$", ExternalGenerateTempTokenView.as_view(), name="external_generate_token"),
     url(r"^external/exchange-token/?$", ExternalExchangeTempTokenView.as_view(), name="external_exchange_token"),
+    url(r"^external/dashboard-stats/?$", ExternalDashboardStatsView.as_view(), name="external_dashboard_stats"),
 ]

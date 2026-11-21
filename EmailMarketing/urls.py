@@ -20,8 +20,10 @@ from EmailMarketing.Views.Media import EmailTemplateMediaListView, EmailTemplate
 from EmailMarketing.Views.Unsubscribe import EmailUnsubscribeView
 from EmailMarketing.Views.SenderIdentity import StoreSenderIdentityView, ValidateSenderIdentityView
 from EmailMarketing.Views.Tracking import EmailOpenTrackingView, EmailClickTrackingView
+from Accounts.views_external import ExternalDashboardStatsView
 
 urlpatterns = [
+    url(r"^external/stats/?$", ExternalDashboardStatsView.as_view(), name="email_external_stats"),
     url(r"^brandSettings$", EmailBrandSettingsView.as_view()),
     url(r"^sender-identity$", StoreSenderIdentityView.as_view()),
     url(r"^sender-identity/validate$", ValidateSenderIdentityView.as_view()),
