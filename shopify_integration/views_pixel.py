@@ -136,7 +136,11 @@ class ShopifyPixelEventIngestionView(APIView):
                     recipient.order_total = order_total
                     recipient.discount_code = discount_code or recipient.discount_code
                     recipient.status = EmailRecipientStatusEnum.purchased.value
-                    recipient.save(update_fields=["converted_at", "clicked_at", "opened_at", "order_id", "order_total", "discount_code", "status", "updated_at"])
+                    if not recipient.add_to_cart_count:
+                        recipient.add_to_cart_count = 1
+                    if not recipient.checkout_started_count:
+                        recipient.checkout_started_count = 1
+                    recipient.save(update_fields=["converted_at", "clicked_at", "opened_at", "order_id", "order_total", "discount_code", "status", "add_to_cart_count", "checkout_started_count", "updated_at"])
 
                     if campaign:
                         recalculate_campaign_stats(campaign)

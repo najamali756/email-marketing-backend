@@ -431,8 +431,8 @@ class CampaignRecipientsView(StoreAuthenticatedMixin, APIView):
         status_counts_agg = base_qs.aggregate(
             all_count=Count("id"),
             purchased=Count("id", filter=Q(status=EmailRecipientStatusEnum.purchased.value) | Q(converted_at__isnull=False) | Q(order_total__gt=0)),
-            checkout_started=Count("id", filter=Q(status=EmailRecipientStatusEnum.checkout_started.value) | Q(checkout_started_count__gt=0)),
-            added_to_cart=Count("id", filter=Q(status=EmailRecipientStatusEnum.added_to_cart.value) | Q(add_to_cart_count__gt=0)),
+            checkout_started=Count("id", filter=Q(status__in=[EmailRecipientStatusEnum.checkout_started.value, EmailRecipientStatusEnum.purchased.value]) | Q(checkout_started_count__gt=0) | Q(converted_at__isnull=False) | Q(order_total__gt=0)),
+            added_to_cart=Count("id", filter=Q(status__in=[EmailRecipientStatusEnum.added_to_cart.value, EmailRecipientStatusEnum.checkout_started.value, EmailRecipientStatusEnum.purchased.value]) | Q(add_to_cart_count__gt=0) | Q(checkout_started_count__gt=0) | Q(converted_at__isnull=False) | Q(order_total__gt=0)),
             clicked=Count("id", filter=Q(status=EmailRecipientStatusEnum.clicked.value) | Q(clicked_at__isnull=False)),
             opened=Count("id", filter=Q(status=EmailRecipientStatusEnum.opened.value) | Q(opened_at__isnull=False)),
             sent=Count("id", filter=Q(status=EmailRecipientStatusEnum.sent.value)),
@@ -467,10 +467,10 @@ class CampaignRecipientsView(StoreAuthenticatedMixin, APIView):
             qs = qs.filter(Q(status=EmailRecipientStatusEnum.purchased.value) | Q(converted_at__isnull=False) | Q(order_total__gt=0))
             normalized_filter_key = "purchased"
         elif status_filter in ["checkout_started", "checkout", "checkoutstarted"]:
-            qs = qs.filter(Q(status=EmailRecipientStatusEnum.checkout_started.value) | Q(checkout_started_count__gt=0))
+            qs = qs.filter(Q(status__in=[EmailRecipientStatusEnum.checkout_started.value, EmailRecipientStatusEnum.purchased.value]) | Q(checkout_started_count__gt=0) | Q(converted_at__isnull=False) | Q(order_total__gt=0))
             normalized_filter_key = "checkout_started"
         elif status_filter in ["added_to_cart", "cart", "addedtocart"]:
-            qs = qs.filter(Q(status=EmailRecipientStatusEnum.added_to_cart.value) | Q(add_to_cart_count__gt=0))
+            qs = qs.filter(Q(status__in=[EmailRecipientStatusEnum.added_to_cart.value, EmailRecipientStatusEnum.checkout_started.value, EmailRecipientStatusEnum.purchased.value]) | Q(add_to_cart_count__gt=0) | Q(checkout_started_count__gt=0) | Q(converted_at__isnull=False) | Q(order_total__gt=0))
             normalized_filter_key = "added_to_cart"
         elif status_filter in ["clicked"]:
             qs = qs.filter(Q(status=EmailRecipientStatusEnum.clicked.value) | Q(clicked_at__isnull=False))
